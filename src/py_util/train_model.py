@@ -1,10 +1,7 @@
 import argparse
 import copy
 import math
-import sched
 import time
-from pyrsistent import v
-from tensorboard import notebook
 import torch
 import pandas as pd
 
@@ -80,12 +77,12 @@ def train(model_handler, num_epochs, early_stopping_patience=0, verbose=True, vl
         # print training (& vld) scores
         if verbose:
             # eval model on training data
-            trn_scores, trn_loss = eval_helper(
-                model_handler,
-                data_name='TRAIN'
-            )
-            trn_scores_dict[epoch] = copy.deepcopy(trn_scores)
-            print("Avg Training loss: {}".format(trn_loss))
+            # trn_scores, trn_loss = eval_helper(
+            #     model_handler,
+            #     data_name='TRAIN'
+            # )
+            # trn_scores_dict[epoch] = copy.deepcopy(trn_scores)
+            # print("Training loss: {}".format(trn_loss))
 
             # update best model checkpoint
             if vld_data is not None:
@@ -481,7 +478,7 @@ if __name__ == "__main__":
 
 # running
 
-
+## LOCAL
 # train BiCondBertLstm
 # python train_model.py -m train -c ../../config/BiCondBertLstm_example.txt -t ../../../data/ustancebr/v2/hold1topic_out/final_bo_train.csv -v ../../../data/ustancebr/v2/hold1topic_out/final_bo_valid.csv -n bo -e 5 -s 1
 # python train_model.py -m train -c ../../config/BiCondBertLstm_example.txt -t ../../../data/ustancebr/v2/hold1topic_out/final_bo_test.csv -v ../../../data/ustancebr/v2/hold1topic_out/final_bo_test.csv -n bo -e 5 -s 1
@@ -491,11 +488,20 @@ if __name__ == "__main__":
 # python train_model.py -m train -c ../../config/Bert_BiLSTMJointAttn_example.txt -t ../../../data/ustancebr/v2/hold1topic_out/final_bo_train.csv -v ../../../data/ustancebr/v2/hold1topic_out/final_bo_valid.csv -p ../../../data/ustancebr/v2/hold1topic_out/final_bo_test.csv -n bo -e 5 -s 1
 # python train_model.py -m train -c ../../config/Bert_BiLSTMJointAttn_example.txt -t ../../../data/ustancebr/v2/hold1topic_out/final_bo_test.csv -v ../../../data/ustancebr/v2/hold1topic_out/final_bo_test.csv -p ../../../data/ustancebr/v2/hold1topic_out/final_bo_test.csv -n bo -e 5 -s 1
 
-# train BertBiLSTMAttn
+# train BertBiLSTMAttn (Simple Domain)
 # python train_model.py -m train -c ../../config/Bert_BiLSTMAttn_example.txt -t ../../../data/ustancebr/v2/simple_domain/final_bo_train.csv -v ../../../data/ustancebr/v2/simple_domain/final_bo_valid.csv -p ../../../data/ustancebr/v2/simple_domain/final_bo_test.csv -n bo -e 5 -s 1
 # python train_model.py -m train -c ../../config/Bert_BiLSTMAttn_example.txt -t ../../../data/ustancebr/v2/simple_domain/final_bo_test.csv -v ../../../data/ustancebr/v2/simple_domain/final_bo_test.csv -p ../../../data/ustancebr/v2/simple_domain/final_bo_test.csv -n bo -e 5 -s 1
 
 
-# simple domain
-# python train_model.py -m train -c ../../config/Bert_BiCondLstm_example.txt -t ../../../data/ustancebr/v2/simple_domain/final_lu_train.csv -v ../../../data/ustancebr/v2/simple_domain/final_lu_valid.csv -p ../../../data/ustancebr/v2/simple_domain/final_bo_test.csv -n bo_simple -e 5 -s 1
-# python train_model.py -m train -c ../../config/Bert_BiLSTMJointAttn_example.txt -t ../../../data/ustancebr/v2/simple_domain/final_lu_train.csv -v ../../../data/ustancebr/v2/simple_domain/final_lu_valid.csv -p ../../../data/ustancebr/v2/simple_domain/final_bo_test.csv -n bo_simple -e 5 -s 1
+## VM
+# train BiCondBertLstm
+# nohup python train_model.py -m train -c ../../config/Bert_BiCondLstm_example_v0.txt -t ../../data/ustancebr/v2/hold1topic_out/final_bo_train.csv -v ../../data/ustancebr/v2/hold1topic_out/final_bo_valid.csv -n bo -e 5 -s 1 &
+# nohup python train_model.py -m train -c ../../config/Bert_BiCondLstm_example_v1.txt -t ../../data/ustancebr/v2/hold1topic_out/final_bo_train.csv -v ../../data/ustancebr/v2/hold1topic_out/final_bo_valid.csv -n bo -e 5 -s 1 &
+
+# train BertBiLSTMJointAttn
+# nohup python train_model.py -m train -c ../../config/Bert_BiLstmJointAttn_example_v0.txt -t ../../data/ustancebr/v2/hold1topic_out/final_bo_train.csv -v ../../data/ustancebr/v2/hold1topic_out/final_bo_valid.csv -p ../../data/ustancebr/v2/hold1topic_out/final_bo_test.csv -n bo -e 5 -s 1 &
+# nohup python train_model.py -m train -c ../../config/Bert_BiLstmJointAttn_example_v1.txt -t ../../data/ustancebr/v2/hold1topic_out/final_bo_train.csv -v ../../data/ustancebr/v2/hold1topic_out/final_bo_valid.csv -p ../../data/ustancebr/v2/hold1topic_out/final_bo_test.csv -n bo -e 5 -s 1 &
+
+# train BertBiLSTMAttn (Simple Domain)
+# nohup python train_model.py -m train -c ../../config/Bert_BiLSTMAttn_example.txt -t ../../../data/ustancebr/v2/simple_domain/final_bo_train.csv -v ../../../data/ustancebr/v2/simple_domain/final_bo_valid.csv -p ../../../data/ustancebr/v2/simple_domain/final_bo_test.csv -n bo -e 5 -s 1 &
+# nohup python train_model.py -m train -c ../../config/Bert_BiLSTMAttn_example.txt -t ../../../data/ustancebr/v2/simple_domain/final_bo_test.csv -v ../../../data/ustancebr/v2/simple_domain/final_bo_test.csv -p ../../../data/ustancebr/v2/simple_domain/final_bo_test.csv -n bo -e 5 -s 1 &

@@ -3,13 +3,13 @@ Cross-Target stance detection
 
 # Requirements:
 
-python==3.7.10
-numpy==1.19.2
-pandas==1.2.4
-tqdm==4.59.8
-scikit-learn==0.24.2
-pytorch==1.9.0 (Cuda 10.2)
-transformers==4.7.0
+- python==3.7.10
+- numpy==1.19.2
+- pandas==1.2.4
+- tqdm==4.59.0
+- scikit-learn==0.24.2
+- pytorch==1.9.0 (Cuda 10.2)
+- transformers==4.7.0
 
 # Training a model:
 

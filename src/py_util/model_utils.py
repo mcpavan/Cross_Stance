@@ -223,8 +223,8 @@ class TorchModelHandler:
             
                 partial_loss += graph_loss.item()
 
-        # avg_loss = partial_loss / batch_n #loss per batch
-        return all_y_pred.numpy(), all_labels.numpy(), partial_loss
+        avg_loss = partial_loss / batch_n #loss per batch
+        return all_y_pred.numpy(), all_labels.numpy(), avg_loss#partial_loss
     
     def eval_and_print(self, data=None, data_name=None):
         '''
@@ -244,7 +244,7 @@ class TorchModelHandler:
         print("Evaluating on \"{}\" data".format(data_name))
         for metric_name, metric_dict in scores.items():
             for class_name, metric_val in metric_dict.items():
-                print(f"{metric_name}_{class_name}: {metric_val:.2f}", end="\t")
+                print(f"{metric_name}_{class_name}: {metric_val}", end="\t")
             print()
 
         return scores, loss
