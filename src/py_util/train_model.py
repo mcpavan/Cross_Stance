@@ -51,7 +51,7 @@ def eval_helper(model_handler, data_name, data=None):
     :return: the scores from running on all the data
     '''
     # eval on full corpus
-    return model_handler.eval_and_print(data=data, data_name=data_name) #(score, loss)
+    return model_handler.eval_and_print(data=data, data_name=data_name) #(score, avg_loss)
 
 def train(model_handler, num_epochs, early_stopping_patience=0, verbose=True, vld_data=None, tst_data=None):
     '''
@@ -75,7 +75,7 @@ def train(model_handler, num_epochs, early_stopping_patience=0, verbose=True, vl
     for epoch in range(num_epochs):
         model_handler.train_step()
         # print training loss 
-        print("training loss: {}".format(model_handler.loss))
+        print("Total training loss: {}".format(model_handler.loss))
 
         # print training (& vld) scores
         if verbose:
@@ -85,7 +85,7 @@ def train(model_handler, num_epochs, early_stopping_patience=0, verbose=True, vl
                 data_name='TRAIN'
             )
             trn_scores_dict[epoch] = copy.deepcopy(trn_scores)
-            print("Training loss: {}".format(trn_loss))
+            print("Avg Training loss: {}".format(trn_loss))
 
             # update best model checkpoint
             if vld_data is not None:
@@ -96,7 +96,7 @@ def train(model_handler, num_epochs, early_stopping_patience=0, verbose=True, vl
                 )
                 vld_scores_dict[epoch] = copy.deepcopy(vld_scores)
                 # print vld loss
-                print("Validation loss: {}".format(vld_loss))
+                print("Avg Validation loss: {}".format(vld_loss))
 
                 #check if is best vld loss to save best model
                 if vld_loss < best_vld_loss:
@@ -121,7 +121,7 @@ def train(model_handler, num_epochs, early_stopping_patience=0, verbose=True, vl
                 )
                 tst_scores_dict[epoch] = copy.deepcopy(tst_scores)
                 # print vld loss
-                print("Test loss: {}".format(tst_loss))
+                print("Avg Test loss: {}".format(tst_loss))
 
     print("TRAINED for {} epochs".format(epoch))
 
@@ -236,6 +236,59 @@ def main(args):
     # RUN
     print("Using cuda?: {}".format(use_cuda))
 
+    if "BiLSTMAttn" in config["name"]:
+        text_input_layer = input_models.BertLayer(
+            use_cuda=use_cuda,
+            pretrained_model_name=config.get("bert_pretrained_model", "bert-base-uncased"),
+            layers=config.get("bert_layers", "-1"),
+            layers_agg_type=config.get("bert_layers_agg", "concat"),
+        )
+
+        loss_reduction = "none" if bool(int(config.get("sample_weights", "0"))) else "mean"
+        if nl < 3:
+            loss_fn = torch.nn.BCELoss(reduction=loss_reduction)
+        else:
+            loss_fn = torch.nn.CrossEntropyLoss(reduction=loss_reduction)#ignore_index=nl)
+
+        model = models.BiLSTMAttentionLayer(
+            lstm_text_input_dim=text_input_layer.dim,
+            lstm_hidden_dim=int(config['lstm_hidden_dim']),
+            lstm_num_layers=int(config.get("lstm_layers","1")),
+            lstm_drop_prob=float(config.get("lstm_drop_prob", config.get('dropout', "0"))),
+            attention_density=int(config['attention_density']),
+            attention_heads=int(config['attention_heads']),
+            attention_drop_prob=float(config.get("attention_drop_prob", config.get('dropout', "0"))),
+            drop_prob=float(config.get('dropout', "0")),
+            num_labels=nl,
+            use_cuda=use_cuda
+        )
+
+        o = torch.optim.Adam(
+            model.parameters(),
+            lr=lr
+        )
+        scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(
+            optimizer=o,
+            patience=2,
+        )
+        # bf = data_utils.prepare_batch
+
+        kwargs = {
+            'model': model,
+            'text_input_model': text_input_layer,
+            'dataloader': trn_dataloader,
+            'name': config['name'] + args['name'],
+            'loss_function': loss_fn,
+            'optimizer': o,
+            'scheduler': scheduler,
+        }
+
+        model_handler = model_utils.TorchModelHandler(
+            checkpoint_path=config.get('ckp_path', 'data/checkpoints/'),
+            use_cuda=use_cuda,
+            **kwargs
+        )
+    
     if "BiLSTMJointAttn" in config["name"]:
         text_input_layer = input_models.BertLayer(
             use_cuda=use_cuda,
@@ -430,10 +483,19 @@ if __name__ == "__main__":
 
 
 # train BiCondBertLstm
-# python train_model.py -m train -c ../../config/BiCondBertLstm_example.txt -t ../../../data/UStanceBR/v2/hold1topic_out/final_bo_train.csv -v ../../../data/UStanceBR/v2/hold1topic_out/final_bo_valid.csv -n bo -e 5 -s 1
-# python train_model.py -m train -c ../../config/BiCondBertLstm_example.txt -t ../../../data/UStanceBR/v2/hold1topic_out/final_bo_test.csv -v ../../../data/UStanceBR/v2/hold1topic_out/final_bo_test.csv -n bo -e 5 -s 1
+# python train_model.py -m train -c ../../config/BiCondBertLstm_example.txt -t ../../../data/ustancebr/v2/hold1topic_out/final_bo_train.csv -v ../../../data/ustancebr/v2/hold1topic_out/final_bo_valid.csv -n bo -e 5 -s 1
+# python train_model.py -m train -c ../../config/BiCondBertLstm_example.txt -t ../../../data/ustancebr/v2/hold1topic_out/final_bo_test.csv -v ../../../data/ustancebr/v2/hold1topic_out/final_bo_test.csv -n bo -e 5 -s 1
 
 
 # train BertBiLSTMJointAttn
-# python train_model.py -m train -c ../../config/Bert_BiLSTMJointAttn_example.txt -t ../../../data/UStanceBR/v2/hold1topic_out/final_bo_train.csv -v ../../../data/UStanceBR/v2/hold1topic_out/final_bo_valid.csv -p ../../../data/UStanceBR/v2/hold1topic_out/final_bo_test.csv -n bo -e 5 -s 1
-# python train_model.py -m train -c ../../config/Bert_BiLSTMJointAttn_example.txt -t ../../../data/UStanceBR/v2/hold1topic_out/final_bo_test.csv -v ../../../data/UStanceBR/v2/hold1topic_out/final_bo_test.csv -p ../../../data/UStanceBR/v2/hold1topic_out/final_bo_test.csv -n bo -e 5 -s 1
+# python train_model.py -m train -c ../../config/Bert_BiLSTMJointAttn_example.txt -t ../../../data/ustancebr/v2/hold1topic_out/final_bo_train.csv -v ../../../data/ustancebr/v2/hold1topic_out/final_bo_valid.csv -p ../../../data/ustancebr/v2/hold1topic_out/final_bo_test.csv -n bo -e 5 -s 1
+# python train_model.py -m train -c ../../config/Bert_BiLSTMJointAttn_example.txt -t ../../../data/ustancebr/v2/hold1topic_out/final_bo_test.csv -v ../../../data/ustancebr/v2/hold1topic_out/final_bo_test.csv -p ../../../data/ustancebr/v2/hold1topic_out/final_bo_test.csv -n bo -e 5 -s 1
+
+# train BertBiLSTMAttn
+# python train_model.py -m train -c ../../config/Bert_BiLSTMAttn_example.txt -t ../../../data/ustancebr/v2/simple_domain/final_bo_train.csv -v ../../../data/ustancebr/v2/simple_domain/final_bo_valid.csv -p ../../../data/ustancebr/v2/simple_domain/final_bo_test.csv -n bo -e 5 -s 1
+# python train_model.py -m train -c ../../config/Bert_BiLSTMAttn_example.txt -t ../../../data/ustancebr/v2/simple_domain/final_bo_test.csv -v ../../../data/ustancebr/v2/simple_domain/final_bo_test.csv -p ../../../data/ustancebr/v2/simple_domain/final_bo_test.csv -n bo -e 5 -s 1
+
+
+# simple domain
+# python train_model.py -m train -c ../../config/Bert_BiCondLstm_example.txt -t ../../../data/ustancebr/v2/simple_domain/final_lu_train.csv -v ../../../data/ustancebr/v2/simple_domain/final_lu_valid.csv -p ../../../data/ustancebr/v2/simple_domain/final_bo_test.csv -n bo_simple -e 5 -s 1
+# python train_model.py -m train -c ../../config/Bert_BiLSTMJointAttn_example.txt -t ../../../data/ustancebr/v2/simple_domain/final_lu_train.csv -v ../../../data/ustancebr/v2/simple_domain/final_lu_valid.csv -p ../../../data/ustancebr/v2/simple_domain/final_bo_test.csv -n bo_simple -e 5 -s 1

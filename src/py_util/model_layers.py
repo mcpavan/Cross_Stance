@@ -206,3 +206,66 @@ class BiLSTMJointAttentionLayer(torch.nn.Module):
             "attention_output": attention_output,
             "attention_weights": attention_weights,
         }
+
+class BiLSTMAttentionLayer(torch.nn.Module):
+
+    def __init__(self, lstm_text_input_dim=768, lstm_hidden_dim=20, lstm_num_layers=1, lstm_dropout=0,
+                 attention_density=16, attention_heads=4, attention_dropout=0, use_cuda=False):
+        super(BiLSTMJointAttentionLayer, self).__init__()
+
+        self.use_cuda = use_cuda
+
+        self.lstm_text_input_dim = lstm_text_input_dim
+        self.lstm_hidden_dim = lstm_hidden_dim
+        self.lstm_num_layers = lstm_num_layers
+        self.lstm_dropout = lstm_dropout
+
+        self.attention_density = attention_density
+        self.attention_heads = attention_heads
+        self.attention_dropout = attention_dropout
+
+        self.text_lstm = nn.LSTM(
+            input_size=self.lstm_text_input_dim,
+            hidden_size=self.lstm_hidden_dim,
+            num_layers=self.lstm_num_layers,
+            dropout=self.lstm_dropout,
+            bidirectional=True,
+        )
+
+        self.mha = torch.nn.MultiheadAttention(
+            embed_dim=self.attention_density,
+            num_heads=self.attention_heads,
+            dropout=self.attention_dropout,
+        )
+
+        if self.use_cuda:
+            self.text_lstm.to("cuda")
+            self.mha.to("cuda")
+
+    def forward(self, txt_e, top_e, txt_l, top_l):
+        ####################
+        # txt_e = (Lx, B, E), top_e = (Lt, B, E), txt_l=(B), top_l=(B)
+        ########################
+        
+        #Text
+        p_text_embeds = rnn.pack_padded_sequence(txt_e, txt_l, enforce_sorted=False)
+        self.text_lstm.flatten_parameters()
+        # (text_ln, B, 2*H), ((2*N_layers, B, H), (2*N_layers, B, H))
+        text_output, (text_last_hiddenstate, text_last_cellstate) = self.text_lstm(p_text_embeds)
+        padded_text_output, _ = rnn.pad_packed_sequence(text_output, total_length=txt_e.shape[0])
+
+        # (text_len, B, Attn_den), (B, text_len, text_len)
+        attention_output, attention_weights = self.mha(
+            query=padded_text_output,
+            key=padded_text_output,
+            value=padded_text_output,
+        )
+
+        # (B, text_len * Attn_den)
+        attention_output = attention_output.transpose(0, 1).reshape((len(txt_l), -1))
+
+        return {
+            "text_lstm_output": text_output,
+            "attention_output": attention_output,
+            "attention_weights": attention_weights,
+        }

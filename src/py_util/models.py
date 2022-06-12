@@ -48,10 +48,9 @@ class BiCondLSTMModel(torch.nn.Module):
 
 class BiLSTMJointAttentionModel(torch.nn.Module):
     '''
-    Bidirectional Coniditional Encoding LSTM (Augenstein et al, 2016, EMNLP)
-    Single layer bidirectional LSTM where initial states are from the topic encoding.
-    Topic is also with a bidirectional LSTM. Prediction done with a single layer FFNN with
-    tanh then softmax, to use cross-entropy loss.
+    Text    -> Embedding    -> Bidirectional LSTM   - A
+    Topic   -> Embedding    -> Bidirectional LSTM   - A
+    A = Multihead Attention Mechanism -> Dense -> Softmax
     '''
 
     def __init__(self, lstm_text_input_dim=768, lstm_topic_input_dim=768, lstm_hidden_dim=20, lstm_num_layers=1, lstm_drop_prob=0,
@@ -86,6 +85,50 @@ class BiLSTMJointAttentionModel(torch.nn.Module):
         topic_embeddings = topic_embeddings.transpose(0, 1) # (C, B, E)
 
         bilstm_return_dict = self.bilstm(text_embeddings, topic_embeddings, text_length, topic_length)
+
+        #dropout
+        attention_dropout = self.dropout(bilstm_return_dict["attention_output"]) # (B, text_len*attn_den)
+
+        y_pred = self.pred_layer(attention_dropout) # (B, 2)
+
+        return y_pred
+
+
+class BiLSTMAttentionModel(torch.nn.Module):
+    '''
+    Text -> Embedding -> Bidirectional LSTM -> Multihead Self-Attention Mechanism -> Dense -> Softmax
+    '''
+
+    def __init__(self, lstm_text_input_dim=768, lstm_hidden_dim=20, lstm_num_layers=1, lstm_drop_prob=0,
+                 attention_density=16, attention_heads=4, attention_drop_prob=0, drop_prob=0, num_labels=3, use_cuda=False):
+        super(BiLSTMJointAttentionModel, self).__init__()
+        
+        self.use_cuda = use_cuda
+        self.num_labels = num_labels
+        self.output_dim = 1 if self.num_labels == 2 else self.num_labels
+
+        self.bilstm = ml.BiLSTMAttentionLayer(
+            lstm_text_input_dim=lstm_text_input_dim,
+            lstm_hidden_dim=lstm_hidden_dim,
+            lstm_num_layers=lstm_num_layers,
+            lstm_dropout=lstm_drop_prob,
+            attention_density=attention_density,
+            attention_heads=attention_heads,
+            attention_dropout=attention_drop_prob,
+            use_cuda=use_cuda,
+        )
+
+        self.dropout = nn.Dropout(p=drop_prob) #dropout on last layer
+        self.pred_layer = ml.PredictionLayer(
+            input_dim = None,
+            output_dim = self.output_dim,
+            use_cuda=use_cuda
+        )
+
+    def forward(self, text_embeddings, text_length):
+        text_embeddings = text_embeddings.transpose(0, 1) # (T, B, E)
+        
+        bilstm_return_dict = self.bilstm(text_embeddings, text_length)
 
         #dropout
         attention_dropout = self.dropout(bilstm_return_dict["attention_output"]) # (B, text_len*attn_den)
