@@ -14,7 +14,7 @@ class TorchModelHandler:
         self.model = params["model"]
         self.text_input_model = params["text_input_model"]
         self.topic_input_model = params.get("topic_input_model")
-        self.is_joint_text_topic = "topic_input_model" not in params
+        self.is_joint_text_topic = bool(int(params.get("is_joint_text_topic", "0")))
 
         self.dataloader = params["dataloader"]
         self.num_labels = self.model.num_labels
@@ -83,7 +83,7 @@ class TorchModelHandler:
         print(f"[{self.name}] epoch {self.epoch}")
         self.model.train()
         self.text_input_model.eval()
-        if not self.is_joint_text_topic:
+        if not self.is_joint_text_topic and self.topic_input_model:
             self.topic_input_model.eval()
         
         self.loss = 0
@@ -106,14 +106,17 @@ class TorchModelHandler:
                     "input_length": batch_data["text"]["input_length"],
                 }
             else:
-                topic_embeddings = self.topic_input_model(**batch_data["topic"])
                 model_inputs = {
                     "text_embeddings": text_embeddings,
                     "text_length": batch_data["text"]["input_length"],
-                    "topic_embeddings": topic_embeddings,
-                    "topic_length": batch_data["topic"]["input_length"]
                 }
-
+                if self.topic_input_model:
+                    topic_embeddings = self.topic_input_model(**batch_data["topic"])
+                    model_inputs.update({
+                        "topic_embeddings": topic_embeddings,
+                        "topic_length": batch_data["topic"]["input_length"],
+                    })
+                
             #apply the text and topic embeddings to the model
             y_pred = self.model(**model_inputs)
 
@@ -177,7 +180,7 @@ class TorchModelHandler:
     def predict(self, data=None):
         self.model.eval()
         self.text_input_model.eval()
-        if not self.is_joint_text_topic:
+        if not self.is_joint_text_topic and self.topic_input_model:
             self.topic_input_model.eval()
         
         partial_loss = 0
@@ -203,14 +206,17 @@ class TorchModelHandler:
                         "input_length": batch_data["text"]["input_length"],
                     }
                 else:
-                    topic_embeddings = self.topic_input_model(**batch_data["topic"])
                     model_inputs = {
                         "text_embeddings": text_embeddings,
                         "text_length": batch_data["text"]["input_length"],
-                        "topic_embeddings": topic_embeddings,
-                        "topic_length": batch_data["topic"]["input_length"]
                     }
-                
+                    if self.topic_input_model:
+                        topic_embeddings = self.topic_input_model(**batch_data["topic"])
+                        model_inputs.update({
+                            "topic_embeddings": topic_embeddings,
+                            "topic_length": batch_data["topic"]["input_length"]
+                        })
+                    
                 y_pred = self.model(**model_inputs)
                 if self.use_cuda:
                     all_y_pred = torch.cat((all_y_pred, y_pred.cpu()))

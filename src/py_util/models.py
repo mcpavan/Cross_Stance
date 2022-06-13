@@ -92,7 +92,6 @@ class BiLSTMJointAttentionModel(torch.nn.Module):
 
         return y_pred
 
-
 class BiLSTMAttentionModel(torch.nn.Module):
     '''
     Text -> Embedding -> Bidirectional LSTM -> Multihead Self-Attention Mechanism -> Dense -> Softmax
@@ -100,7 +99,7 @@ class BiLSTMAttentionModel(torch.nn.Module):
 
     def __init__(self, lstm_text_input_dim=768, lstm_hidden_dim=20, lstm_num_layers=1, lstm_drop_prob=0,
                  attention_density=16, attention_heads=4, attention_drop_prob=0, drop_prob=0, num_labels=3, use_cuda=False):
-        super(BiLSTMJointAttentionModel, self).__init__()
+        super(BiLSTMAttentionModel, self).__init__()
         
         self.use_cuda = use_cuda
         self.num_labels = num_labels

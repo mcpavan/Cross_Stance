@@ -211,7 +211,7 @@ class BiLSTMAttentionLayer(torch.nn.Module):
 
     def __init__(self, lstm_text_input_dim=768, lstm_hidden_dim=20, lstm_num_layers=1, lstm_dropout=0,
                  attention_density=16, attention_heads=4, attention_dropout=0, use_cuda=False):
-        super(BiLSTMJointAttentionLayer, self).__init__()
+        super(BiLSTMAttentionLayer, self).__init__()
 
         self.use_cuda = use_cuda
 
@@ -242,9 +242,9 @@ class BiLSTMAttentionLayer(torch.nn.Module):
             self.text_lstm.to("cuda")
             self.mha.to("cuda")
 
-    def forward(self, txt_e, top_e, txt_l, top_l):
+    def forward(self, txt_e, txt_l):
         ####################
-        # txt_e = (Lx, B, E), top_e = (Lt, B, E), txt_l=(B), top_l=(B)
+        # txt_e = (Lx, B, E), txt_l=(B)
         ########################
         
         #Text
