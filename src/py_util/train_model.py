@@ -145,33 +145,58 @@ def train(model_handler, num_epochs, early_stopping_patience=0, verbose=True, vl
             data=tst_data
         )
 
-def save_predictions(model_handler, dev_data, out_name, is_test=False):#, correct_preds=False):
-    trn_results = model_handler.predict()
-    trn_preds = trn_results[0]
+def save_predictions(model_handler, dev_data, dev_dataloader, out_name, config, is_test=False, is_valid=False):#, correct_preds=False):
+    # trn_results = model_handler.predict()
+    # trn_preds = trn_results[0]
     
-    dev_results = model_handler.predict(data=dev_data)#, correct_preds=correct_preds)
-    dev_preds = dev_results[0]
+    dev_results = model_handler.predict(data=dev_dataloader)#, correct_preds=correct_preds)
+    # dev_preds = dev_results[0]
+
+    dev_preds = []
+    if int(config['n_output_classes']) == 2:
+        for pred_val in dev_results[0]:
+            int_pred = int(pred_val > 0.5)
+            vec_pred = (int_pred,)
+
+            dev_preds.append(dev_data.convert_vec_to_lbl(vec_pred))
+    else:
+        base_vec = [0 for i in range(int(config['n_output_classes']))]
+        
+        for pred_val in dev_results[0]:
+            int_pred = pred_val.argmax()
+            
+            vec_pred = base_vec*0
+            vec_pred[int_pred] = 1
+            vec_pred = tuple(vec_pred)
+
+            dev_preds.append(dev_data.convert_vec_to_lbl(vec_pred))
 
     if is_test:
         dev_name = 'test'
-    else:
+    elif is_valid:
         dev_name = 'dev'
+    else:
+        dev_name = 'train'
 
-    predict_helper(trn_preds, model_handler.dataloader.data).to_csv(out_name + '-train.csv', index=False)
-    print("saved to {}-train.csv".format(out_name))
-    predict_helper(dev_preds, dev_data.data).to_csv(out_name + '-{}.csv'.format(dev_name), index=False)
+    # predict_helper(trn_preds, model_handler.dataloader).to_csv(out_name + '-train.csv', index=False)
+    # print("saved to {}-train.csv".format(out_name))
+    predict_helper(dev_preds, dev_data, config).to_csv(out_name + '-{}.csv'.format(dev_name), index=False)
     print("saved to {}-{}.csv".format(out_name, dev_name))
 
 
-def predict_helper(pred_lst, pred_data):
+def predict_helper(pred_lst, pred_data, config):
     out_data = []
-    cols = list(pred_data.data_file.columns)
-    for i in pred_data.data_file.index:
-        row = pred_data.data_file.iloc[i]
+    cols = [
+        config['text_col'],
+        config['topic_col'],
+        config['label_col'],
+    ]
+    for i in pred_data.df.index:
+        row = pred_data.df.iloc[i]
         temp = [row[c] for c in cols]
         temp.append(pred_lst[i])
         out_data.append(temp)
-    cols += ['pred label']
+    cols += [config['label_col']+'_pred']
     return pd.DataFrame(out_data, columns=cols)
 
 def main(args):
@@ -188,16 +213,21 @@ def main(args):
     # LOAD DATA #
     #############
     # load training data
-    train_data = load_data(config, args, data_key="trn")
     batch_size = int(config['batch_size'])
-    train_n_batches = math.ceil(len(train_data) / batch_size)
-    print(f"# of Training instances: {len(train_data)}. Batch Size={batch_size}. # of batches: {train_n_batches}")
+    if args['trn_data'] is not None:
+        train_data = load_data(config, args, data_key="trn")
+        train_n_batches = math.ceil(len(train_data) / batch_size)
+        print(f"# of Training instances: {len(train_data)}. Batch Size={batch_size}. # of batches: {train_n_batches}")
 
-    trn_dataloader = torch.utils.data.DataLoader(
-        train_data,
-        batch_size=int(config['batch_size']),
-        shuffle=True
-    )
+        trn_dataloader = torch.utils.data.DataLoader(
+            train_data,
+            batch_size=int(config['batch_size']),
+            shuffle=True
+        )
+    else:
+        if args["mode"] == "train":
+            raise "Please use a dataset to train the model."
+        trn_dataloader = None
 
     # load vld data if specified
     if args['vld_data'] is not None:
@@ -445,20 +475,37 @@ def main(args):
         # laod saved model and save the predictions
         model_handler.load(filename=args["saved_model_file_name"])
         
+        if trn_dataloader is not None:
+            save_predictions(
+                model_handler=model_handler,
+                dev_data=train_data,
+                dev_dataloader=trn_dataloader,
+                out_name=args["out_path"],
+                config=config,
+                is_test=False,#('test' in args["trn_data"] or 'tst' in args["trn_data"]),
+                is_valid=False,#('valid' in args["trn_data"] or 'vld' in args["trn_data"]),
+            )
+            
         if vld_dataloader is not None:
             save_predictions(
-                model_handler,
-                vld_dataloader,
-                out_name=args.out_path,
-                is_test=('test' in args.vld_data)
+                model_handler=model_handler,
+                dev_data=vld_data,
+                dev_dataloader=vld_dataloader,
+                out_name=args["out_path"],
+                config=config,
+                is_test=False,#('test' in args["vld_data"] or 'tst' in args["vld_data"]),
+                is_valid=True,#('valid' in args["vld_data"] or 'vld' in args["vld_data"]),
             )
         
         if tst_dataloader is not None:
             save_predictions(
-                model_handler,
-                tst_dataloader,
-                out_name=args.out_path,
-                is_test=('test' in args.tst_data)
+                model_handler=model_handler,
+                dev_data=tst_data,
+                dev_dataloader=tst_dataloader,
+                out_name=args["out_path"],
+                config=config,
+                is_test=True,#('test' in args["tst_data"] or 'tst' in args["tst_data"]),
+                is_valid=False,#('valid' in args["tst_data"] or 'vld' in args["tst_data"]),
             )
 
 if __name__ == "__main__":
@@ -493,8 +540,10 @@ if __name__ == "__main__":
 
 # train BertBiLSTMAttn (Simple Domain)
 # python train_model.py -m train -c ../../config/Bert_BiLstmAttn_example.txt -t ../../../data/ustancebr/v2/simple_domain/final_bo_train.csv -v ../../../data/ustancebr/v2/simple_domain/final_bo_valid.csv -p ../../../data/ustancebr/v2/simple_domain/final_bo_test.csv -n bo -e 5 -s 1
-# python train_model.py -m train -c ../../config/Bert_BiLstmAttn_example.txt -t ../../../data/ustancebr/v2/simple_domain/final_bo_test.csv -v ../../../data/ustancebr/v2/simple_domain/final_bo_test.csv -p ../../../data/ustancebr/v2/simple_domain/final_bo_test.csv -n bo -e 5 -s 1
 
+# predict BertBiLSTMAttn (Simple Domain)
+# python train_model.py -m predict -c ../../config/Bert_BiLstmAttn_example.txt  -p ../../../data/ustancebr/v2/simple_domain/final_bo_test.csv -f ../../checkpoints/ustancebr/V0/ckp-BertBiLSTMAttn_ustancebr_bo-BEST.tar -o ../../out/ustancebr/pred/BertBiLSTMAttn_bo_BEST_v0
+# -t ../../../data/ustancebr/v2/simple_domain/final_bo_train.csv -v ../../../data/ustancebr/v2/simple_domain/final_bo_valid.csv
 
 ## VM
 # train BiCondBertLstm
