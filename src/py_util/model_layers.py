@@ -130,7 +130,7 @@ class BiCondLSTMLayer(torch.nn.Module):
 class BiLSTMJointAttentionLayer(torch.nn.Module):
 
     def __init__(self, lstm_topic_input_dim=768, lstm_text_input_dim=768, lstm_hidden_dim=20, lstm_num_layers=1, lstm_dropout=0,
-                 attention_density=16, attention_heads=4, attention_dropout=0, use_cuda=False):
+                 attention_density=None, attention_heads=4, attention_dropout=0, use_cuda=False):
         super(BiLSTMJointAttentionLayer, self).__init__()
 
         self.use_cuda = use_cuda
@@ -160,15 +160,35 @@ class BiLSTMJointAttentionLayer(torch.nn.Module):
             bidirectional=True,
         )
 
-        self.mha = torch.nn.MultiheadAttention(
-            embed_dim=self.attention_density,
-            num_heads=self.attention_heads,
-            dropout=self.attention_dropout,
-        )
+        if self.attention_density:
+            self.dense_q = nn.LazyLinear(out_features=self.attention_density)
+            self.q_dropout = nn.Dropout(self.attention_dropout)
+            
+            self.dense_k = nn.LazyLinear(out_features=self.attention_density)
+            self.k_dropout = nn.Dropout(self.attention_dropout)
+            
+            self.dense_v = nn.LazyLinear(out_features=self.attention_density)
+            self.v_dropout = nn.Dropout(self.attention_dropout)
+
+            self.mha = torch.nn.MultiheadAttention(
+                embed_dim=self.attention_density,
+                num_heads=self.attention_heads,
+                dropout=self.attention_dropout,
+            )
+        else:
+            self.mha = torch.nn.MultiheadAttention(
+                embed_dim=self.lstm_hidden_dim,
+                num_heads=self.attention_heads,
+                dropout=self.attention_dropout,
+            )
 
         if self.use_cuda:
             self.topic_lstm.to("cuda")
             self.text_lstm.to("cuda")
+            if self.attention_density:
+                self.dense_q.to("cuda")
+                self.dense_k.to("cuda")
+                self.dense_v.to("cuda")
             self.mha.to("cuda")
 
     def forward(self, txt_e, top_e, txt_l, top_l):
@@ -179,23 +199,36 @@ class BiLSTMJointAttentionLayer(torch.nn.Module):
         # Topic
         p_top_embeds = rnn.pack_padded_sequence(top_e, top_l, enforce_sorted=False)
         self.topic_lstm.flatten_parameters()
-        # (text_ln, B, 2*H), ((2*N_layers, B, H), (2*N_layers, B, H))
+        # (topic_ln, B, 2*H), ((2*N_layers, B, H), (2*N_layers, B, H))
         topic_output, (topic_last_hiddenstate, topic_last_cellstate) = self.topic_lstm(p_top_embeds)
         padded_topic_output, _ = rnn.pad_packed_sequence(topic_output, total_length=top_e.shape[0])
 
         #Text
         p_text_embeds = rnn.pack_padded_sequence(txt_e, txt_l, enforce_sorted=False)
         self.text_lstm.flatten_parameters()
-        # (topic_ln, B, 2*H), ((2*N_layers, B, H), (2*N_layers, B, H))
+        # (text_ln, B, 2*H), ((2*N_layers, B, H), (2*N_layers, B, H))
         text_output, (text_last_hiddenstate, text_last_cellstate) = self.text_lstm(p_text_embeds)
         padded_text_output, _ = rnn.pad_packed_sequence(text_output, total_length=txt_e.shape[0])
 
-        # (text_len, B, Attn_den), (B, text_len, topic_len)
-        attention_output, attention_weights = self.mha(
-            query=padded_text_output,
-            key=padded_topic_output,
-            value=padded_topic_output,
-        )
+        if self.attention_density:
+            # (text_ln, B, attention_density)
+            q = self.q_dropout(self.dense_q(padded_text_output))
+            k = self.k_dropout(self.dense_k(padded_topic_output))
+            v = self.v_dropout(self.dense_v(padded_topic_output))
+
+            # (text_len, B, Attn_den), (B, text_len, topic_len)
+            attention_output, attention_weights = self.mha(
+                query=q,
+                key=k,
+                value=v,
+            )
+        else:
+            # (text_len, B, Attn_den), (B, text_len, topic_len)
+            attention_output, attention_weights = self.mha(
+                query=padded_text_output,
+                key=padded_topic_output,
+                value=padded_topic_output,
+            )
 
         # (B, text_len * Attn_den)
         attention_output = attention_output.transpose(0, 1).reshape((len(txt_l), -1))
@@ -232,14 +265,34 @@ class BiLSTMAttentionLayer(torch.nn.Module):
             bidirectional=True,
         )
 
-        self.mha = torch.nn.MultiheadAttention(
-            embed_dim=self.attention_density,
-            num_heads=self.attention_heads,
-            dropout=self.attention_dropout,
-        )
+        if self.attention_density:
+            self.dense_q = nn.LazyLinear(out_features=self.attention_density)
+            self.q_dropout = nn.Dropout(self.attention_dropout)
+            
+            self.dense_k = nn.LazyLinear(out_features=self.attention_density)
+            self.k_dropout = nn.Dropout(self.attention_dropout)
+            
+            self.dense_v = nn.LazyLinear(out_features=self.attention_density)
+            self.v_dropout = nn.Dropout(self.attention_dropout)
+
+            self.mha = torch.nn.MultiheadAttention(
+                embed_dim=self.attention_density,
+                num_heads=self.attention_heads,
+                dropout=self.attention_dropout,
+            )
+        else:
+            self.mha = torch.nn.MultiheadAttention(
+                embed_dim=self.lstm_hidden_dim,
+                num_heads=self.attention_heads,
+                dropout=self.attention_dropout,
+            )
 
         if self.use_cuda:
             self.text_lstm.to("cuda")
+            if self.attention_density:
+                self.dense_q.to("cuda")
+                self.dense_k.to("cuda")
+                self.dense_v.to("cuda")
             self.mha.to("cuda")
 
     def forward(self, txt_e, txt_l):
@@ -253,14 +306,27 @@ class BiLSTMAttentionLayer(torch.nn.Module):
         # (text_ln, B, 2*H), ((2*N_layers, B, H), (2*N_layers, B, H))
         text_output, (text_last_hiddenstate, text_last_cellstate) = self.text_lstm(p_text_embeds)
         padded_text_output, _ = rnn.pad_packed_sequence(text_output, total_length=txt_e.shape[0])
+        
+        if self.attention_density:
+            # (text_ln, B, attention_density)
+            q = self.q_dropout(self.dense_q(padded_text_output))
+            k = self.k_dropout(self.dense_k(padded_text_output))
+            v = self.v_dropout(self.dense_v(padded_text_output))
 
-        # (text_len, B, Attn_den), (B, text_len, text_len)
-        attention_output, attention_weights = self.mha(
-            query=padded_text_output,
-            key=padded_text_output,
-            value=padded_text_output,
-        )
-
+            # (text_len, B, Attn_den), (B, text_len, topic_len)
+            attention_output, attention_weights = self.mha(
+                query=q,
+                key=k,
+                value=v,
+            )
+        else:
+            # (text_len, B, Attn_den), (B, text_len, topic_len)
+            attention_output, attention_weights = self.mha(
+                query=padded_text_output,
+                key=padded_text_output,
+                value=padded_text_output,
+            )
+        
         # (B, text_len * Attn_den)
         attention_output = attention_output.transpose(0, 1).reshape((len(txt_l), -1))
 

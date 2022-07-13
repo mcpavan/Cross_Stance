@@ -344,7 +344,7 @@ def main(args):
             lstm_hidden_dim=int(config['lstm_hidden_dim']),
             lstm_num_layers=int(config.get("lstm_layers","1")),
             lstm_drop_prob=float(config.get("lstm_drop_prob", config.get('dropout', "0"))),
-            attention_density=int(config['attention_density']),
+            attention_density=int(config.get('attention_density', None)),
             attention_heads=int(config['attention_heads']),
             attention_drop_prob=float(config.get("attention_drop_prob", config.get('dropout', "0"))),
             drop_prob=float(config.get('dropout', "0")),

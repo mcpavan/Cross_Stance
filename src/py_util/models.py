@@ -53,7 +53,7 @@ class BiLSTMJointAttentionModel(torch.nn.Module):
     '''
 
     def __init__(self, lstm_text_input_dim=768, lstm_topic_input_dim=768, lstm_hidden_dim=20, lstm_num_layers=1, lstm_drop_prob=0,
-                 attention_density=16, attention_heads=4, attention_drop_prob=0, drop_prob=0, num_labels=3, use_cuda=False):
+                 attention_density=None, attention_heads=4, attention_drop_prob=0, drop_prob=0, num_labels=3, use_cuda=False):
         super(BiLSTMJointAttentionModel, self).__init__()
         
         self.use_cuda = use_cuda
