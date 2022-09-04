@@ -1,5 +1,3 @@
-from glob import glob
-
 config_file_name = "Bert_BiLSTMAttn"
 data_folder = "simple_domain" #"hold1topic_out" or "simple_domain"
 out_path = "./sh_auto_train_all.sh"
@@ -16,7 +14,6 @@ python train_model.py -m train -c ../../config/{data_folder}/{config_file_name}_
 with open(out_path, "w") as f_:
     print("\n", file=f_)
 
-# for config_path in  glob(f"../{data_folder}/*.txt"):
 for k in range(1,33):
     partial_text = base_text \
     .replace("{config_file_name}", config_file_name) \

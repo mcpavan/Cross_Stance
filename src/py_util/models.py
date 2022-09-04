@@ -1,6 +1,61 @@
+from copy import deepcopy
 import torch
 import torch.nn as nn
 import model_layers as ml
+
+def get_model_class_and_params(model_type, params):
+    model_type = model_type.lower()
+    if model_type == "bicond":
+        return BiCondLSTMModel(
+            hidden_dim=int(params["lstm_hidden_dim"]),
+            text_input_dim=params["text_input_dim"],
+            topic_input_dim=params["topic_input_dim"],
+            num_layers=int(params.get("lstm_layers", "1")),
+            drop_prob=float(params.get("dropout", "0")),
+            num_labels=params["num_labels"],
+            use_cuda=params["use_cuda"]
+        )
+    
+    elif model_type == "bilstmattn":
+        return BiLSTMAttentionModel(
+            lstm_text_input_dim=params["text_input_dim"],
+            lstm_hidden_dim=int(params["lstm_hidden_dim"]),
+            lstm_num_layers=int(params.get("lstm_layers", "1")),
+            lstm_drop_prob=float(params.get("lstm_drop_prob", params.get("dropout", "0"))),
+            attention_density=int(params["attention_density"]),
+            attention_heads=int(params["attention_heads"]),
+            attention_drop_prob=float(params.get("attention_drop_prob", params.get("dropout", "0"))),
+            drop_prob=float(params.get("dropout", "0")),
+            num_labels=params["num_labels"],
+            use_cuda=params["use_cuda"]
+        )
+    
+    elif model_type == "bilstmjointattn":
+        return BiLSTMJointAttentionModel(
+            lstm_text_input_dim=params["text_input_dim"],
+            lstm_topic_input_dim=params["topic_input_dim"],
+            lstm_hidden_dim=int(params["lstm_hidden_dim"]),
+            lstm_num_layers=int(params.get("lstm_layers", "1")),
+            lstm_drop_prob=float(params.get("lstm_drop_prob", params.get("dropout", "0"))),
+            attention_density=int(params.get("attention_density", None)),
+            attention_heads=int(params["attention_heads"]),
+            attention_drop_prob=float(params.get("attention_drop_prob", params.get("dropout", "0"))),
+            drop_prob=float(params.get("dropout", "0")),
+            num_labels=params["num_labels"],
+            use_cuda=params["use_cuda"]
+        )
+    
+    elif model_type == "crossnet":
+        return BiCondLSTMModel(
+            hidden_dim=int(params["lstm_hidden_dim"]),
+            attn_dim=int(params["attn_dim"]),
+            text_input_dim=params["text_input_dim"],
+            topic_input_dim=params["topic_input_dim"],
+            num_layers=int(params.get("lstm_layers", "1")),
+            drop_prob=float(params.get("dropout", "0")),
+            num_labels=params["num_labels"],
+            use_cuda=params["use_cuda"]
+        )
 
 class BiCondLSTMModel(torch.nn.Module):
     '''
@@ -132,5 +187,118 @@ class BiLSTMAttentionModel(torch.nn.Module):
         attention_dropout = self.dropout(bilstm_return_dict["attention_output"]) # (B, text_len*attn_den)
 
         y_pred = self.pred_layer(attention_dropout) # (B, 2)
+
+        return y_pred
+
+# class MixtureOfExpertsModel(torch.nn.Module):
+#     # '''
+#     # Text -> Embedding -> Experts -> Dense -> Softmax
+#     # '''
+
+#     def __init__(self, n_experts=3, experts_params=None, gating_params=None, num_labels=3, use_cuda=False):
+#         super(MixtureOfExpertsModel, self).__init__()
+        
+#         self.use_cuda = use_cuda
+#         self.n_experts = n_experts
+#         self.num_labels = num_labels
+#         self.output_dim = 1 if self.num_labels == 2 else self.num_labels
+#         self.expert_models = []
+
+#         if isinstance(experts_params, dict):
+#             experts_params = [experts_params] * self.n_experts
+#         elif not isinstance(experts_params, list):
+#             raise ValueError(f"Please use a list or a dict as `experts_params` value. Type received: {type(experts_params)}")
+        
+#         if len(experts_params) != int(self.n_experts):
+#             raise ValueError(f"Please use 1 or {self.n_experts} dicts in `experts_params` value. Received: {len(experts_params)}")
+
+#         for expert_params_ in experts_params:
+#             new_expert_params_ = deepcopy(expert_params_)
+#             new_expert_params_["use_cuda"] = self.use_cuda
+#             new_expert_params_["num_labels"] = self.num_labels
+#             del new_expert_params_["model_type"]
+            
+#             self.expert_models += [
+#                 get_model_class_and_params(
+#                     expert_params_["model_type"],
+#                     new_expert_params_
+#                 )
+#             ]
+        
+#         new_gating_params_ = deepcopy(gating_params)
+#         new_gating_params_["use_cuda"] = self.use_cuda
+#         new_gating_params_["num_labels"] = self.n_experts
+#         del new_gating_params_["model_type"]
+
+#         self.gating = get_model_class_and_params(
+#             gating_params["model_type"],
+#             new_gating_params_
+#         )
+
+#     def forward(self, text_embeddings, text_length, topic_embeddings=None, topic_length=None):
+#         input_params = {
+#             "text_embeddings": text_embeddings.transpose(0, 1), # (T, B, E)
+#             "text_length": text_length,
+#         }
+#         if topic_embeddings is not None:
+#             input_params["topic_embeddings"] = topic_embeddings.transpose(0, 1) # (C, B, E)
+#             input_params["topic_length"] = topic_length
+        
+#         print(input_params)
+#         gating_pred = self.gating.forward(**input_params) # (n_experts,)
+#         expert_pred = []
+#         for expert_model_ in self.expert_models:
+#             expert_model_ += [expert_model_.forward(**input_params)]
+#         expert_pred = torch.cat(expert_pred) # (n_experts, n_outputs)
+
+#         y_pred = expert_pred.dot(gating_pred) #(n_outputs,)
+
+#         return y_pred
+
+
+class CrossNet(torch.nn.Module):
+    '''
+    Cross Net (Xu et al. 2018)
+    Cross-Target Stance Classification with Self-Attention Networks
+    BiCond + Aspect Attention Layer
+    '''
+    def __init__(self, hidden_dim, attn_dim, text_input_dim, topic_input_dim, num_layers=1, drop_prob=0, num_labels=3, use_cuda=False):
+        super(CrossNet, self).__init__()
+
+        self.use_cuda = use_cuda
+        self.num_labels = num_labels
+        self.output_dim = 1 if self.num_labels == 2 else self.num_labels
+        self.text_input_dim = text_input_dim
+        self.topic_input_dim = topic_input_dim
+        self.hidden_dim = hidden_dim
+        self.attn_dim = attn_dim
+
+        self.crossNet_layer = ml.CrossNetLayer(
+            hidden_dim=self.hidden_dim,
+            attn_dim=self.attn_dim,
+            text_input_dim=self.text_input_dim,
+            topic_input_dim=self.topic_input_dim,
+            num_layers=num_layers,
+            dropout_prob=drop_prob,
+            use_cuda=self.use_cuda
+        )
+
+        self.dropout = nn.Dropout(p=drop_prob) #dropout on last layer
+        self.pred_layer = ml.PredictionLayer(
+            input_dim = 2 * num_layers * self.hidden_dim,
+            output_dim = self.output_dim,
+            use_cuda=use_cuda
+        )
+
+    def forward(self, text_embeddings, topic_embeddings, text_length, topic_length):
+        text_embeddings = text_embeddings.transpose(0, 1) # (T, B, E)
+        topic_embeddings = topic_embeddings.transpose(0, 1) # (C, B, E)
+
+        _, att_vec, _ = self.crossNet_layer(text_embeddings, topic_embeddings, text_length, topic_length)
+
+        #dropout
+        att_vec_drop = self.dropout(att_vec) # (B, H*N, dir * N_layers)
+
+        y_pred = self.pred_layer(att_vec_drop) # (B, 2)
 
         return y_pred

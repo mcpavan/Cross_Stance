@@ -2,10 +2,18 @@ from itertools import product
 import os
 
 first_v_config = 1
-folder = "simple_domain" #"hold1topic_out" or "simple_domain"
-out_path = "./{folder}/Bert_BiLSTMAttn_v{k}.txt"
+folder = "simple_domain" # "simple_domain" or "hold1topic_out"
+model_name_out_file = "Bert_BiLSTMAttn" # Bert_BiLSTMAttn or Bert_BiLSTMJointAttn
+out_path = "./{folder}/{model_name_out_file}_v{k}.txt" 
 os.makedirs("/".join(out_path.split("/")[:-1]).replace("{folder}", folder), exist_ok=True)
 
+base_text = """
+"""
+
+values_dict = {}
+
+
+# BertBiLSTMAttn_ustancebr_ or BertBiLSTMJointAttn_ustancebr_
 
 base_text = """name:BertBiLSTMAttn_ustancebr_
 bert:1
@@ -34,7 +42,7 @@ epochs:10"""
 
 values_dict = {
     "bert_pretrained_model": [
-        # "neuralmind/bert-base-portuguese-cased",
+        "neuralmind/bert-base-portuguese-cased",
         "pablocosta/bert-tweet-br-base",
     ],
     "bert_layers": [
@@ -65,8 +73,11 @@ for k, combination in enumerate(product(*list(values_dict.values())), start=firs
     for key, value in zip(values_dict.keys(), combination):
         new_text = new_text.replace("{"+key+"}", value)
 
-    new_text = new_text.replace("{folder}", folder).replace("{k}", str(k))
-    current_out_path = out_path.replace("{folder}", folder).replace("{k}", str(k))
+    new_text = new_text.replace("{folder}", folder) \
+                       .replace("{k}", str(k))
+    current_out_path = out_path.replace("{folder}", folder) \
+                               .replace("{model_name_out_file}", model_name_out_file) \
+                               .replace("{k}", str(k))
     with open(current_out_path, "w") as f_:
         print(new_text, file=f_, flush=True)
     

@@ -335,3 +335,63 @@ class BiLSTMAttentionLayer(torch.nn.Module):
             "attention_output": attention_output,
             "attention_weights": attention_weights,
         }
+
+class CrossNetLayer(torch.nn.Module):
+    '''
+    Cross Net (Xu et al. 2018)
+    Cross-Target Stance Classification with Self-Attention Networks
+    BiCond + Aspect Attention Layer
+    '''
+    def __init__(self, hidden_dim, attn_dim, text_input_dim, topic_input_dim, num_layers=1, dropout_prob=0, use_cuda=False):
+        super(CrossNetLayer, self).__init__()
+        self.use_cuda = use_cuda
+
+        self.hidden_dim = hidden_dim
+        self.attn_dim = attn_dim
+        self.text_input_dim = text_input_dim
+        self.topic_input_dim = topic_input_dim
+        self.num_layers = num_layers
+        self.dropout_prob = dropout_prob
+
+        self.bicond = BiCondLSTMLayer(
+            hidden_dim=self.hidden_dim,
+            text_input_dim=self.text_input_dim,
+            topic_input_dim=self.topic_input_dim,
+            num_layers=self.num_layers,
+            lstm_dropout=self.dropout_prob,
+            use_cuda=self.use_cuda,
+        )
+
+        self.device = 'cuda' if self.use_cuda else 'cpu'
+
+        #aspect attention
+        self.W1 = torch.empty((2* self.hidden_dim, self.attn_dim), device=self.device)
+        self.W1 = nn.Parameter(nn.init.xavier_normal_(self.W1))
+
+        self.w2 = torch.empty((self.attn_dim, 1), device=self.device)
+        self.w2 = nn.Parameter(nn.init.xavier_normal_(self.w2))
+
+        self.b1 = torch.empty((self.attn_dim, 1), device=self.device)
+        self.b1 = nn.Parameter(nn.init.xavier_normal_(self.b1)).squeeze(1)
+
+        self.b2 = torch.rand([1],  device=self.device)
+        self.b2 = nn.Parameter(self.b2)
+
+        self.dropout = nn.Dropout(p=self.dropout_prob)
+
+    def forward(self, txt_e, top_e, txt_l, top_l):
+        ### bicond-lstm
+        padded_output, _, last_top_hn, _ = self.bicond(txt_e, top_e, txt_l, top_l)
+
+        padded_output = self.dropout(padded_output)
+        # padded_output: (L, B, 2H), txt_fw_bw_hn: (B, 2H), last_top_hn: (2, B, H)
+        output = padded_output.transpose(0, 1) #(B, L, 2H)
+
+        ### self-attnetion
+        temp_c = torch.sigmoid(torch.einsum('blh,hd->bld', output, self.W1) + self.b1) #(B, L, D)
+        c = torch.einsum('bld,ds->bls', temp_c, self.w2).squeeze(-1) + self.b2 #(B, L)
+        a = nn.functional.softmax(c, dim=1)
+
+        att_vec = torch.einsum('blh,bl->bh', output, a) #(B, 2H)
+
+        return output, att_vec, last_top_hn

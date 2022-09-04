@@ -123,8 +123,9 @@ class TorchModelHandler:
             # calculate the loss, and backprogate it to update weights
             graph_loss = self.loss_function(y_pred, label_tensor)
             if "sample_weight" in batch_data:
+                weight_lst = batch_data["sample_weight"]
                 if self.use_cuda:
-                    weight_lst = batch_data["sample_weight"].to('cuda')
+                    weight_lst = weight_lst.to('cuda')
                 graph_loss = torch.mean(graph_loss * weight_lst)
             
             graph_loss.backward()
@@ -218,13 +219,15 @@ class TorchModelHandler:
                         })
                     
                 y_pred = self.model(**model_inputs)
-                if self.use_cuda:
-                    all_y_pred = torch.cat((all_y_pred, y_pred.cpu()))
+                # if self.use_cuda:
+                all_y_pred = torch.cat((all_y_pred, y_pred.cpu()))
                 
                 graph_loss = self.loss_function(y_pred, label_tensor)
                 if "sample_weight" in batch_data:
+                    weight_lst = batch_data["sample_weight"]
                     if self.use_cuda:
-                        weight_lst = batch_data["sample_weight"].to('cuda')
+                        weight_lst = weight_lst.to('cuda')
+                    
                     graph_loss = torch.mean(graph_loss * weight_lst)
             
                 partial_loss += graph_loss.item()

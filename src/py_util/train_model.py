@@ -183,7 +183,6 @@ def save_predictions(model_handler, dev_data, dev_dataloader, out_name, config, 
     predict_helper(dev_preds, dev_data, config).to_csv(out_name + '-{}.csv'.format(dev_name), index=False)
     print("saved to {}-{}.csv".format(out_name, dev_name))
 
-
 def predict_helper(pred_lst, pred_data, config):
     out_data = []
     cols = [
@@ -290,15 +289,14 @@ def main(args):
             use_cuda=use_cuda
         )
 
-        o = torch.optim.Adam(
+        opt = torch.optim.Adam(
             model.parameters(),
             lr=lr
         )
         scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(
-            optimizer=o,
+            optimizer=opt,
             patience=2,
         )
-        # bf = data_utils.prepare_batch
 
         kwargs = {
             'model': model,
@@ -306,7 +304,7 @@ def main(args):
             'dataloader': trn_dataloader,
             'name': config['name'] + args['name'],
             'loss_function': loss_fn,
-            'optimizer': o,
+            'optimizer': opt,
             'scheduler': scheduler,
             'is_joint_text_topic':config.get("is_joint"),
         }
@@ -317,7 +315,7 @@ def main(args):
             **kwargs
         )
     
-    if "BiLSTMJointAttn" in config["name"]:
+    elif "BiLSTMJointAttn" in config["name"]:
         text_input_layer = input_models.BertLayer(
             use_cuda=use_cuda,
             pretrained_model_name=config.get("bert_pretrained_model", "bert-base-uncased"),
@@ -352,15 +350,14 @@ def main(args):
             use_cuda=use_cuda
         )
 
-        o = torch.optim.Adam(
+        opt = torch.optim.Adam(
             model.parameters(),
             lr=lr
         )
         scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(
-            optimizer=o,
+            optimizer=opt,
             patience=2,
         )
-        # bf = data_utils.prepare_batch
 
         kwargs = {
             'model': model,
@@ -369,7 +366,7 @@ def main(args):
             'dataloader': trn_dataloader,
             'name': config['name'] + args['name'],
             'loss_function': loss_fn,
-            'optimizer': o,
+            'optimizer': opt,
             'scheduler': scheduler,
             'is_joint_text_topic':config.get("is_joint"),
         }
@@ -380,7 +377,7 @@ def main(args):
             **kwargs
         )
     
-    if 'BiCond' in config['name']:
+    elif 'BiCond' in config['name']:
         text_input_layer = input_models.BertLayer(
             use_cuda=use_cuda,
             pretrained_model_name=config.get("bert_pretrained_model", "bert-base-uncased"),
@@ -399,28 +396,26 @@ def main(args):
         if nl < 3:
             loss_fn = torch.nn.BCELoss(reduction=loss_reduction)
         else:
-            loss_fn = torch.nn.CrossEntropyLoss(reduction=loss_reduction)#ignore_index=nl)
+            loss_fn = torch.nn.CrossEntropyLoss(reduction=loss_reduction)
 
         model = models.BiCondLSTMModel(
             hidden_dim=int(config['lstm_hidden_dim']),
             text_input_dim=text_input_layer.dim,
             topic_input_dim=topic_input_layer.dim,
             num_layers=int(config.get("lstm_layers","1")),
-            drop_prob=float(config['dropout']),
+            drop_prob=float(config.get('dropout', "0")),
             num_labels=nl,
             use_cuda=use_cuda,
         )
 
-        o = torch.optim.Adam(
+        opt = torch.optim.Adam(
             model.parameters(),
             lr=lr
         )
         scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(
-            optimizer=o,
+            optimizer=opt,
             patience=2,
         )
-
-        # bf = data_utils.prepare_batch
 
         kwargs = {
             'model': model,
@@ -429,7 +424,7 @@ def main(args):
             'dataloader': trn_dataloader,
             'name': config['name'] + args['name'],
             'loss_function': loss_fn,
-            'optimizer': o,
+            'optimizer': opt,
             'scheduler': scheduler,
             'is_joint_text_topic':config.get("is_joint"),
         }
@@ -440,6 +435,137 @@ def main(args):
             **kwargs
         )
 
+    # elif "mixture" in config["name"].lower():
+    #     text_input_layer = input_models.BertLayer(
+    #         use_cuda=use_cuda,
+    #         pretrained_model_name=config.get("bert_pretrained_model", "bert-base-uncased"),
+    #         layers=config.get("bert_layers", "-1"),
+    #         layers_agg_type=config.get("bert_layers_agg", "concat"),
+    #     )
+
+    #     topic_input_layer = input_models.BertLayer(
+    #         use_cuda=use_cuda,
+    #         pretrained_model_name=config.get("bert_pretrained_model", "bert-base-uncased"),
+    #         layers=config.get("bert_layers", "-1"),
+    #         layers_agg_type=config.get("bert_layers_agg", "concat"),
+    #     )
+        
+    #     loss_reduction = "none" if bool(int(config.get("sample_weights", "0"))) else "mean"
+    #     if nl < 3:
+    #         loss_fn = torch.nn.BCELoss(reduction=loss_reduction)
+    #     else:
+    #         loss_fn = torch.nn.CrossEntropyLoss(reduction=loss_reduction)#ignore_index=nl)
+        
+    #     base_params_dict = {
+    #         "text_input_dim": text_input_layer.dim,
+    #         "topic_input_dim": topic_input_layer.dim,
+    #     }
+
+    #     n_experts = int(config.get("n_experts", 3))
+    #     expert_params = [copy.deepcopy(base_params_dict) for _ in range(n_experts)]
+    #     gating_params = copy.deepcopy(base_params_dict)
+        
+    #     for key, value in config.items():
+    #         if key.startswith("gating_"):
+    #             gating_params[key.replace("gating_", "")] = value
+    #         elif key.startswith("expert_"):
+    #             expert_number = int(key.split("_")[1])
+    #             expert_params[expert_number-1][key.replace(f"expert_{expert_number}_", "")] = value
+
+    #     model = models.MixtureOfExpertsModel(
+    #         n_experts=config.get("n_experts", 3),
+    #         experts_params=expert_params,
+    #         gating_params=gating_params,
+    #         num_labels=nl,
+    #         use_cuda=use_cuda,
+    #     )
+
+    #     o = torch.optim.Adam(
+    #         model.parameters(),
+    #         lr=lr
+    #     )
+
+    #     scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(
+    #         optimizer=o,
+    #         patience=2,
+    #     )
+
+    #     kwargs = {
+    #         'model': model,
+    #         'text_input_model': text_input_layer,
+    #         'topic_input_model': topic_input_layer,
+    #         'dataloader': trn_dataloader,
+    #         'name': config['name'] + args['name'],
+    #         'loss_function': loss_fn,
+    #         'optimizer': o,
+    #         'scheduler': scheduler,
+    #         'is_joint_text_topic':config.get("is_joint"),
+    #     }
+
+    #     model_handler = model_utils.TorchModelHandler(
+    #         checkpoint_path=config.get('ckp_path', 'data/checkpoints/'),
+    #         use_cuda=use_cuda,
+    #         **kwargs
+    #     )
+
+    elif 'CrossNet' in config['name']:
+        text_input_layer = input_models.BertLayer(
+            use_cuda=use_cuda,
+            pretrained_model_name=config.get("bert_pretrained_model", "bert-base-uncased"),
+            layers=config.get("bert_layers", "-1"),
+            layers_agg_type=config.get("bert_layers_agg", "concat"),
+        )
+
+        topic_input_layer = input_models.BertLayer(
+            use_cuda=use_cuda,
+            pretrained_model_name=config.get("bert_pretrained_model", "bert-base-uncased"),
+            layers=config.get("bert_layers", "-1"),
+            layers_agg_type=config.get("bert_layers_agg", "concat"),
+        )
+        
+        loss_reduction = "none" if bool(int(config.get("sample_weights", "0"))) else "mean"
+        if nl < 3:
+            loss_fn = torch.nn.BCELoss(reduction=loss_reduction)
+        else:
+            loss_fn = torch.nn.CrossEntropyLoss(reduction=loss_reduction)
+        
+        model = models.CrossNet(
+            hidden_dim=int(config['lstm_hidden_dim']),
+            attn_dim=int(config["attention_dimension"]),
+            text_input_dim=text_input_layer.dim,
+            topic_input_dim=topic_input_layer.dim,
+            num_layers=int(config.get("lstm_layers","1")),
+            drop_prob=float(config.get('dropout', "0")),
+            num_labels=nl,
+            use_cuda=use_cuda,
+        )
+
+        opt = torch.optim.Adam(
+            model.parameters(),
+            lr=lr
+        )
+        scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(
+            optimizer=opt,
+            patience=2,
+        )
+
+        kwargs = {
+            'model': model,
+            'text_input_model': text_input_layer,
+            'topic_input_model': topic_input_layer,
+            'dataloader': trn_dataloader,
+            'name': config['name'] + args['name'],
+            'loss_function': loss_fn,
+            'optimizer': opt,
+            'scheduler': scheduler,
+            'is_joint_text_topic':config.get("is_joint"),
+        }
+
+        model_handler = model_utils.TorchModelHandler(
+            checkpoint_path=config.get('ckp_path', 'data/checkpoints/'),
+            use_cuda=use_cuda,
+            **kwargs
+        )
 
     if args["mode"] == 'train':
         # Train model
@@ -544,6 +670,15 @@ if __name__ == "__main__":
 # predict BertBiLSTMAttn (Simple Domain)
 # python train_model.py -m predict -c ../../config/Bert_BiLstmAttn_example.txt  -p ../../../data/ustancebr/v2/simple_domain/final_bo_test.csv -f ../../checkpoints/ustancebr/V0/ckp-BertBiLSTMAttn_ustancebr_bo-BEST.tar -o ../../out/ustancebr/pred/BertBiLSTMAttn_bo_BEST_v0
 # -t ../../../data/ustancebr/v2/simple_domain/final_bo_train.csv -v ../../../data/ustancebr/v2/simple_domain/final_bo_valid.csv
+
+# eval BertBiLSTMAttn (Simple Domain)
+# python train_model.py -m eval -c ../../config/simple_domain/Bert_BiLSTMAttn_v1.txt  -p ../../data/ustancebr/v2/simple_domain/final_bo_test.csv -f ../../checkpoints/ustancebr/simple_domain/V1/ckp-BertBiLSTMAttn_ustancebr_bo-BEST.tar -o ../../out/ustancebr/eval/BertBiLSTMAttn_bo_BEST_v1 -t ../../data/ustancebr/v2/simple_domain/final_bo_train.csv -v ../../data/ustancebr/v2/simple_domain/final_bo_valid.csv
+
+# train MixtureOfExperts (Simple Domain)
+# python train_model.py -m train -c ../../config/Bert_Mixture_example.txt -t ../../../data/ustancebr/v2/simple_domain/final_bo_train.csv -v ../../../data/ustancebr/v2/simple_domain/final_bo_valid.csv -p ../../../data/ustancebr/v2/simple_domain/final_bo_test.csv -n bo -e 5 -s 1
+
+# train CrossNet (Simple Domain)
+# python train_model.py -m train -c ../../config/Bert_CrossNet_example.txt -t ../../../data/ustancebr/v2/simple_domain/final_bo_train.csv -v ../../../data/ustancebr/v2/simple_domain/final_bo_valid.csv -p ../../../data/ustancebr/v2/simple_domain/final_bo_test.csv -n bo -e 2 -s 1
 
 ## VM
 # train BiCondBertLstm
