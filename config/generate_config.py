@@ -3,7 +3,7 @@ import os
 
 first_v_config = 1
 folder = "simple_domain" # "simple_domain" or "hold1topic_out"
-model_name_out_file = "Bert_BiLSTMAttn" # Bert_BiLSTMAttn or Bert_BiLSTMJointAttn
+model_name_out_file = "BertBiLSTMAttn" # BertBiLSTMAttn or BertBiLSTMJointAttn
 out_path = "./{folder}/{model_name_out_file}_v{k}.txt" 
 os.makedirs("/".join(out_path.split("/")[:-1]).replace("{folder}", folder), exist_ok=True)
 
@@ -15,7 +15,7 @@ values_dict = {}
 
 # BertBiLSTMAttn_ustancebr_ or BertBiLSTMJointAttn_ustancebr_
 
-base_text = """name:BertBiLSTMAttn_ustancebr_
+base_text = """name:{model_name_out_file}_ustancebr_
 bert:1
 bert_pretrained_model:{bert_pretrained_model}
 bert_layers:{bert_layers}
@@ -43,7 +43,7 @@ epochs:10"""
 values_dict = {
     "bert_pretrained_model": [
         "neuralmind/bert-base-portuguese-cased",
-        "pablocosta/bert-tweet-br-base",
+        "pablocosta/bertabaporu-base-uncased",
     ],
     "bert_layers": [
         "-1",
@@ -73,7 +73,8 @@ for k, combination in enumerate(product(*list(values_dict.values())), start=firs
     for key, value in zip(values_dict.keys(), combination):
         new_text = new_text.replace("{"+key+"}", value)
 
-    new_text = new_text.replace("{folder}", folder) \
+    new_text = new_text.replace("{model_name_out_file}", model_name_out_file) \
+                       .replace("{folder}", folder) \
                        .replace("{k}", str(k))
     current_out_path = out_path.replace("{folder}", folder) \
                                .replace("{model_name_out_file}", model_name_out_file) \

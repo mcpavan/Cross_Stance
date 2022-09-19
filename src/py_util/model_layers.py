@@ -1,3 +1,4 @@
+import math
 import torch
 import torch.nn as nn
 import torch.nn.utils.rnn as rnn
@@ -395,3 +396,77 @@ class CrossNetLayer(torch.nn.Module):
         att_vec = torch.einsum('blh,bl->bh', output, a) #(B, 2H)
 
         return output, att_vec, last_top_hn
+
+class TOADScaledDotProductAttentionLayer(torch.nn.Module):
+    '''
+    Scaled Dot Product Attention Layer used in TOAD model
+    '''
+    def __init__(self, input_dim, use_cuda=False):
+        super(TOADScaledDotProductAttentionLayer, self).__init__()
+        self.input_dim = input_dim
+
+        self.scale = math.sqrt(2 * self.input_dim)
+
+    def forward(self, inputs, query):
+        # inputs = (B, L, 2*H), query = (B, 2*H), last_hidden=(B, 2*H)
+        sim = torch.einsum('blh,bh->bl', inputs, query) / self.scale  # (B, L)
+        att_weights = nn.functional.softmax(sim, dim=1)  # (B, L)
+        context_vec = torch.einsum('blh,bl->bh', inputs, att_weights)  # (B, 2*H)
+        return context_vec
+
+class TOADTransformationLayer(torch.nn.Module):
+    '''
+    Linear transformation layer used in TOAD model
+    '''
+    def __init__(self, input_size, use_cuda=False):
+        super(TOADTransformationLayer, self).__init__()
+
+        self.use_cuda = use_cuda
+
+        self.dim = input_size
+
+        self.W = torch.empty(
+            (self.dim, self.dim),
+            device='cuda' if self.use_cuda else 'cpu'
+        )
+        self.W = nn.Parameter(nn.init.xavier_normal_(self.W)) # (D, D)
+
+    def forward(self, text):
+        # text: (B, D)
+        return torch.einsum('bd,dd->bd', text, self.W)
+
+class TOADReconstructionLayer(torch.nn.Module):
+    '''
+    Embedding reconstruction layer used in TOAD model
+    '''
+    def __init__(self, hidden_dim, embed_dim, use_cuda=False):
+        super(TOADReconstructionLayer, self).__init__()
+
+        self.hidden_dim = hidden_dim
+        self.embed_dim = embed_dim
+        self.use_cuda = use_cuda
+        device = 'cuda' if self.use_cuda else 'cpu'
+
+        self.recon_W = torch.empty(
+            (2 * self.hidden_dim, self.embed_dim),
+            device=device
+        )
+        self.recon_w = nn.Parameter(nn.init.xavier_normal_(self.recon_W))
+
+        self.recon_b = torch.empty(
+            (self.embed_dim, 1),
+            device=device
+        )
+        self.recon_b = nn.Parameter(nn.init.xavier_normal_(self.recon_b)).squeeze(1)
+        
+        self.tanh = nn.Tanh()
+
+    def forward(self, text_output, text_mask):
+        # text_output: (B, T, H), text_mask: (B, T)
+        recon_embeds = self.tanh(
+            torch.einsum('blh,he->ble', text_output, self.recon_w) + self.recon_b
+        )  # (B,L,E)
+
+        recon_embeds = torch.einsum('ble,bl->ble', recon_embeds, text_mask)
+        
+        return recon_embeds

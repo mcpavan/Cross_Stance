@@ -1,4 +1,4 @@
-import torch, time
+import torch, time, numpy as np
 from sklearn.metrics import f1_score, precision_score, recall_score
 from tqdm import tqdm
 import os
@@ -92,7 +92,11 @@ class TorchModelHandler:
 
         for batch_n, batch_data in tqdm(enumerate(self.dataloader)):
             #zero gradients before every optimizer step
-            label_tensor = batch_data["label"][0].reshape(-1,1).type(torch.FloatTensor)
+            # label_tensor = batch_data["label"][0].reshape(-1,1).type(torch.FloatTensor)
+            label_tensor = torch.stack(batch_data["label"]).T
+            if len(label_tensor.shape) > 1 and label_tensor.shape[-1] != 1:
+                label_tensor = label_tensor.argmax(dim=1).reshape(-1,1)
+            
             if self.use_cuda:
                 label_tensor = label_tensor.to("cuda")
 
@@ -194,7 +198,10 @@ class TorchModelHandler:
         for batch_n, batch_data in tqdm(enumerate(data)):
             with torch.no_grad():
                 #zero gradients before every optimizer step
-                label_tensor = batch_data["label"][0].reshape(-1,1).type(torch.FloatTensor)
+                label_tensor = torch.stack(batch_data["label"]).T
+                if len(label_tensor.shape) > 1 and label_tensor.shape[-1] != 1:
+                    label_tensor = label_tensor.argmax(dim=1).reshape(-1,1)
+                
                 all_labels = torch.cat((all_labels, label_tensor))
                 if self.use_cuda:
                     label_tensor = label_tensor.to("cuda")
@@ -276,3 +283,213 @@ class TorchModelHandler:
         score_dict = self.compute_scores(recall_score, true_labels, pred_labels, 'r', score_dict)
 
         return score_dict
+
+class TOADTorchModelHandler(TorchModelHandler):
+    def __init__(self, num_ckps=1, checkpoint_path='./data/checkpoints/', use_cuda=False, **params):
+
+        TorchModelHandler.__init__(
+            self,
+            num_ckps=num_ckps,
+            checkpoint_path=checkpoint_path,
+            use_cuda=use_cuda,
+            **params
+        )
+
+        self.adv_optimizer = params['adv_optimizer']
+        self.tot_epochs = params['tot_epochs']
+        self.initial_lr = params['initial_lr']
+        self.alpha = params['alpha']
+        self.beta = params['beta']
+        self.num_constant_lr = params['num_constant_lr']
+
+    def adjust_learning_rate(self, epoch):
+        if epoch >= self.num_constant_lr:
+            tot_epochs_for_calc = self.tot_epochs - self.num_constant_lr
+            epoch_for_calc = epoch - self.num_constant_lr
+            p = epoch_for_calc / tot_epochs_for_calc
+            new_lr = self.initial_lr / ((1 + self.alpha * p) ** self.beta)
+            for param_group in self.optimizer.param_groups:
+                param_group['lr'] = new_lr
+            for param_group in self.adv_optimizer.param_groups:
+                param_group['lr'] = new_lr
+
+    def get_learning_rate(self):
+        for param_group in self.optimizer.param_groups:
+            lr = param_group['lr']
+            break
+        return lr
+
+    def train_step(self):
+        '''
+        Runs one epoch of training on this model.
+        '''
+        if self.epoch > 0:  # self.loss_function.use_adv:
+            self.loss_function.update_param_using_p(self.epoch)  # update the adversarial parameter
+        
+        print("[{}] epoch {}".format(self.name, self.epoch))
+        print("Adversarial parameter rho - {}".format(self.loss_function.adv_param))
+        print("Learning rate - {}".format(self.get_learning_rate()))
+        
+        self.model.train()
+        self.text_input_model.eval()
+        if not self.is_joint_text_topic and self.topic_input_model:
+            self.topic_input_model.eval()
+
+        # clear the loss
+        self.loss = 0.
+        self.adv_loss = 0
+        
+        # TRAIN
+        start_time = time.time()
+        for batch_n, batch_data in tqdm(enumerate(self.dataloader)):
+            # zero gradients before EVERY optimizer step3
+            label_tensor = torch.stack(batch_data["label"]).T
+            if len(label_tensor.shape) > 1 and label_tensor.shape[-1] != 1:
+                label_tensor = label_tensor.argmax(dim=1).reshape(-1,1)
+
+            topic_tensor = torch.stack(batch_data["topic_label"]).T
+            if len(topic_tensor.shape) > 1 and topic_tensor.shape[-1] != 1:
+                topic_tensor = topic_tensor.argmax(dim=1).reshape(-1,1)
+
+            text_mask = batch_data["text"]["attention_mask"].type(torch.IntTensor)
+            topic_mask = batch_data["topic"]["attention_mask"].type(torch.IntTensor)
+            
+            if self.use_cuda:
+                label_tensor = label_tensor.to("cuda")
+                topic_tensor = topic_tensor.to("cuda")
+
+                text_mask = text_mask.to("cuda")
+                topic_mask = topic_mask.to("cuda")
+            
+            self.model.zero_grad()
+
+            # get the embeddings for text and topic and creates a dict to pass as params to the model
+            text_embeddings = self.text_input_model(**batch_data["text"])
+            topic_embeddings = self.topic_input_model(**batch_data["topic"])
+            model_inputs = {
+                "text_embeddings": text_embeddings,
+                "text_length": batch_data["text"]["input_length"],
+                "text_mask": text_mask,
+                "topic_embeddings": topic_embeddings,
+                "topic_length": batch_data["topic"]["input_length"],
+                "topic_mask": topic_mask,
+            }
+                
+            #apply the text and topic embeddings to the model
+            pred_info = self.model(**model_inputs)
+
+            pred_info['W'] = self.model.trans_layer.W
+            pred_info['topic_i'] = topic_tensor         #Assigning topic indices to this dictionary element which is then used to calc adversarial loss on predicting train data topics
+
+            # While training we want to compute adversarial loss.
+            graph_loss_all, graph_loss_adv = self.loss_function(
+                pred_info,
+                label_tensor,
+                compute_adv_loss=True
+            )
+            self.loss += graph_loss_all.item()
+            self.adv_loss += graph_loss_adv.item()
+            
+            graph_loss_all.backward(retain_graph=True)  # NOT on adv. params
+            self.optimizer.step()
+
+            self.model.zero_grad()
+            if True:  # self.loss_function.use_adv: - always do this, train adversary a bit first on it's own
+                graph_loss_adv.backward()
+                self.adv_optimizer.step()
+                # only on adv params
+
+        total_time = (time.time() - start_time)/60
+        print(f"    took: {total_time:.2f} min")
+
+        self.epoch += 1
+        self.adjust_learning_rate(self.epoch)                # Adjusts the main and adversary optimizer learning rates using logic in base paper.
+
+    def predict(self, data=None):
+        self.model.eval()
+        self.text_input_model.eval()
+        if not self.is_joint_text_topic and self.topic_input_model:
+            self.topic_input_model.eval()
+        
+        partial_main_loss = 0
+
+        all_stance_pred = None
+        all_stance_labels = None
+
+        all_topic_pred = None
+        all_topic_labels = None
+
+        if data is None:
+            data = self.dataloader
+        
+        for batch_n, batch_data in tqdm(enumerate(data)):
+            with torch.no_grad():
+                #zero gradients before every optimizer step
+                label_tensor = torch.stack(batch_data["label"]).T
+                if len(label_tensor.shape) > 1 and label_tensor.shape[-1] != 1:
+                    label_tensor = label_tensor.argmax(dim=1).reshape(-1,1)
+
+                topic_tensor = torch.stack(batch_data["topic_label"]).T
+                if len(topic_tensor.shape) > 1 and topic_tensor.shape[-1] != 1:
+                    topic_tensor = topic_tensor.argmax(dim=1).reshape(-1,1)
+                
+                text_mask = batch_data["text"]["attention_mask"].type(torch.IntTensor)
+                topic_mask = batch_data["topic"]["attention_mask"].type(torch.IntTensor)
+
+                if batch_n:
+                    all_stance_labels = torch.cat((all_stance_labels, label_tensor))
+                    all_topic_labels = torch.cat((all_topic_labels, topic_tensor))
+                else:
+                    all_stance_labels = label_tensor
+                    all_topic_labels = topic_tensor
+
+                if self.use_cuda:
+                    label_tensor = label_tensor.to("cuda")
+                    topic_tensor = topic_tensor.to("cuda")
+
+                    text_mask = text_mask.to("cuda")
+                    topic_mask = topic_mask.to("cuda")
+
+                # get the embeddings for text and topic and creates a dict to pass as params to the model
+                text_embeddings = self.text_input_model(**batch_data["text"])
+                topic_embeddings = self.topic_input_model(**batch_data["topic"])
+                model_inputs = {
+                    "text_embeddings": text_embeddings,
+                    "text_length": batch_data["text"]["input_length"],
+                    "text_mask": text_mask,
+                    "topic_embeddings": topic_embeddings,
+                    "topic_length": batch_data["topic"]["input_length"],
+                    "topic_mask": topic_mask,
+                }
+                    
+                #apply the text and topic embeddings to the model
+                pred_info = self.model(**model_inputs)
+
+                if batch_n:
+                    all_stance_pred = torch.cat((all_stance_pred, pred_info["stance_pred"].cpu()))
+                    all_topic_pred = torch.cat((all_topic_pred, pred_info["adv_pred"].cpu()))
+                else:
+                    all_stance_pred = pred_info["stance_pred"].cpu()
+                    all_topic_pred = pred_info["adv_pred"].cpu()
+
+                pred_info['W'] = self.model.trans_layer.W
+                pred_info['topic_i'] = topic_tensor         #Assigning topic indices to this dictionary element which is then used to calc adversarial loss on predicting train data topics
+
+                # While training we want to compute adversarial loss.
+                graph_loss_all, graph_loss_adv = self.loss_function(
+                    pred_info,
+                    label_tensor,
+                    compute_adv_loss=False
+                )
+
+                partial_main_loss += graph_loss_all.item()
+
+        avg_loss = partial_main_loss / batch_n #loss per batch
+        return all_stance_pred, all_stance_labels, all_topic_pred, all_topic_labels, avg_loss
+
+    def eval_model(self, data=None):
+        # pred_topics and true_topics will be none while evaluating on dev set
+        stance_pred, stance_labels, topic_pred, topic_labels, loss = self.predict(data)
+        score_dict = self.score(stance_pred, stance_labels)
+
+        return score_dict, loss

@@ -35,10 +35,12 @@ class BertStanceDataset(Dataset):
         self.topic_col = kwargs["topic_col"]
         self.label_col = kwargs["label_col"]
         self.tgt2vec, self.vec2tgt, self.tgt_cnt = create_tgt_lookup_tables(self.df[self.label_col])
+        self.df["vec_target"] = [self.convert_lbl_to_vec(tgt, self.tgt2vec) for tgt in self.df[self.label_col]]
         self.n_labels = len(self.tgt_cnt)
-        
-        self.df["vec_target"] = [self.convert_lbl_to_vec(tgt) for tgt in self.df[self.label_col]]
-        
+
+        self.topic2vec, self.vec2topic, self.topic_cnt = create_tgt_lookup_tables(self.df[self.topic_col])
+        self.df["vec_topic"] = [self.convert_lbl_to_vec(tgt, self.topic2vec) for tgt in self.df[self.topic_col]]
+
         self.max_seq_len_text = int(kwargs["max_seq_len_text"])
         self.max_seq_len_topic = int(kwargs["max_seq_len_topic"])
 
@@ -158,36 +160,50 @@ class BertStanceDataset(Dataset):
                 "text": text_item,
                 "topic": topic_item,
                 "label": self.df.loc[index, "vec_target"],
+                "topic_label": self.df.loc[index, "vec_topic"],
             }
         else:
             return_dict = {
                 "text": text_item,
                 "label": self.df.loc[index, "vec_target"],
+                "topic_label": self.df.loc[index, "vec_topic"],
             }
         if self.sample_weights:
             return_dict["sample_weight"] = self.df.loc[index, "weight"]
-        
+
         return return_dict
     
-    def convert_lbl_to_vec(self, label):
+    def convert_lbl_to_vec(self, label, lbl2vec=None):
         """
         Convert a target to a vector
         :param labels: a string label
+        :param lbl2vec: a dict containing the map of string labels to vectors
         :return: A vector representing the label
         """
+        if not lbl2vec:
+            lbl2vec = self.tgt2vec
         assert isinstance(label, str), "Target is not String"
-        return self.tgt2vec.get(label)
+        return lbl2vec.get(label)
 
-    def convert_vec_to_lbl(self, vec):
+    def convert_vec_to_lbl(self, vec, vec2lbl=None):
         """
         Convert a vector representing a target to an actual label
         :param vec: A vector representing a label
+        :param vec2lbl: A dict containing a map of vectors to string labels
         :return: Label represented by the input vector
         """
+        if not vec2lbl:
+            vec2lbl = self.vec2tgt
         assert isinstance(vec, tuple) or isinstance(vec, float), "Target type is not tuple or float"
         if isinstance(vec, float)==1:
             vec = vec[0] * len(self.tgt_cnt.keys())
-        return self.vec2tgt.get(vec) or list(self.vec2tgt.values())[0]
+        return vec2lbl.get(vec) or list(self.vec2lbl.values())[0]
+    
+    def get_topic_list(self):
+        return self.df[self.topic_col].unique().tolist()
+
+    def get_num_topics(self):
+        return len(self.get_topic_list())
     
 def create_tgt_lookup_tables(targets):
     """

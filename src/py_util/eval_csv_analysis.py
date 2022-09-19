@@ -1,31 +1,71 @@
 import pandas as pd
 import matplotlib.pyplot as plt
 import seaborn as sns
+from train_model import load_config_file
 
+show_img = False
+bert_model_name_map = {
+    "neuralmind/bert-base-portuguese-cased": "BERTimbau",
+    "pablocosta/bertabaporu-base-uncased": "BERTabaporu",
+}
+
+config_base_path = "../../config"
 eval_base_path = "../../out/ustancebr/eval"
-eval_file_path = f"{eval_base_path}/eval_data.csv"
+data_path = f"{eval_base_path}/.results/data"
+img_base_path = f"{eval_base_path}/.results/img"
+eval_file_path = f"{data_path}/eval_data.csv"
+
+grp_cols_source = [
+    "data_folder",
+    "config_file_name",
+    "source_topic",
+    "destination_topic",
+    "bert",
+]
+grp_cols_dest = [
+    "data_folder",
+    "config_file_name",
+    "destination_topic",
+    "bert",
+]
+out_metrics = [
+    "test_fmacro",
+    "test_pmacro",
+    "test_rmacro",
+]
+
+def get_max_value_row(df, max_var):
+    idx = df[max_var].idxmax()
+
+    return df.loc[idx]
+
+def get_bert_model_name(info):
+    data_folder = info["data_folder"]
+    config_file_name = info["config_file_name"]
+    version = info["version"]
+
+    config_file_path = f"{config_base_path}/{data_folder}/{config_file_name}_v{version}.txt"
+
+    config_dict = load_config_file(config_file_path=config_file_path)
+    model_name = "-"
+    if "bert" in config_dict or "bert" in config_dict["name"]:
+        model_name = config_dict.get("bert_pretrained_model", "bert-base-uncased")
+
+    return bert_model_name_map.get(model_name, model_name)
 
 df = pd.read_csv(eval_file_path)
-df["bert"] = df["version"].apply(lambda x: "bertimbau" if x <= 32 else "berttweet")
+df["bert"] = df.apply(get_bert_model_name, axis=1)
 
-# def get_max_value_row(df, max_var):
-#     idx = df[max_var].idxmax()
+best_valid = df.groupby(grp_cols_source) \
+               .apply(lambda x: get_max_value_row(x, "valid_fmacro")) \
+               [["test_fmacro", "test_pmacro", "test_rmacro"]] #\
+            #    .unstack("destination_topic")
+best_valid.to_csv(f"{data_path}/best_valid_metrics_full_test.csv")
 
-#     return df.loc[idx]
-
-# grp_cols = [
-#     "data_folder",
-#     "config_file_name",
-#     "source_topic",
-#     "destination_topic",
-#     "bert",
-# ]
-# best_valid = df.groupby(grp_cols).apply(lambda x: get_max_value_row(x, "valid_fmacro"))["test_fmacro"]
-# best_valid.to_csv("test1.csv")
-
+sd_df = df.query("source_topic == destination_topic")
 plt.figure(figsize=(16,9))
 sns.boxplot(
-    data=df.query("source_topic==destination_topic"),
+    data=sd_df,
     y="destination_topic",
     x="test_fmacro",
     hue="bert",
@@ -37,8 +77,9 @@ sns.boxplot(
     palette="Set3",
 )
 plt.title("Simple Domain")
-plt.savefig(f"{eval_base_path}/SimpleDomain.png")
-plt.show()
+plt.savefig(f"{img_base_path}/SimpleDomain.png")
+if show_img:
+    plt.show()
 
 predefined_pairs = "(source_topic=='bo' and destination_topic=='lu')" + \
     "or (source_topic=='lu' and destination_topic=='bo')" + \
@@ -47,6 +88,7 @@ predefined_pairs = "(source_topic=='bo' and destination_topic=='lu')" + \
     "or (source_topic=='gl' and destination_topic=='ig')" + \
     "or (source_topic=='ig' and destination_topic=='gl')"
 
+ct_df = df.query(predefined_pairs)
 plt.figure(figsize=(16,9))
 sns.boxplot(
     data=df.query(predefined_pairs),
@@ -61,12 +103,15 @@ sns.boxplot(
     palette="Set3",
 )
 plt.title("Cross Target")
-plt.savefig(f"{eval_base_path}/CrossTarget.png")
-plt.show()
+plt.savefig(f"{img_base_path}/CrossTarget.png")
+if show_img:
+    plt.show()
 
+
+h1to_df = df.query("source_topic!=destination_topic")
 plt.figure(figsize=(16,9))
 sns.boxplot(
-    data=df.query("source_topic!=destination_topic"),
+    data=h1to_df,
     y="destination_topic",
     x="test_fmacro",
     hue="bert",
@@ -78,5 +123,6 @@ sns.boxplot(
     palette="Set3",
 )
 plt.title("Hold1TopicOut")
-plt.savefig(f"{eval_base_path}/Hold1TopicOut.png")
-plt.show()
+plt.savefig(f"{img_base_path}/Hold1TopicOut.png")
+if show_img:
+    plt.show()

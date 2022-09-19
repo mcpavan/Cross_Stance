@@ -3,8 +3,8 @@ from glob import glob
 from tqdm import tqdm
 
 eval_base_path = "../../out/ustancebr/eval"
-out_path = f"{eval_base_path}/eval_data.csv"
-errors_out_path = f"{eval_base_path}/errors_eval_data.csv"
+out_path = f"{eval_base_path}/.results/data/eval_data.csv"
+errors_out_path = f"{eval_base_path}/.results/data/errors_eval_data.csv"
 
 eval_results_dict = {
     "data_folder": [],

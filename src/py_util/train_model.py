@@ -1,11 +1,12 @@
 import argparse
 import copy
+import itertools
 import math
 import time
 import torch
 import pandas as pd
 
-import datasets, models, input_models, model_utils
+import datasets, models, input_models, model_utils, loss_fn as lf
 
 SEED = 0
 use_cuda = torch.cuda.is_available()
@@ -221,7 +222,8 @@ def main(args):
         trn_dataloader = torch.utils.data.DataLoader(
             train_data,
             batch_size=int(config['batch_size']),
-            shuffle=True
+            shuffle=True,
+            drop_last=args["drop_last_batch"]
         )
     else:
         if args["mode"] == "train":
@@ -237,7 +239,8 @@ def main(args):
         vld_dataloader = torch.utils.data.DataLoader(
             vld_data,
             batch_size=int(config['batch_size']),
-            shuffle=False
+            shuffle=False,
+            drop_last=args["drop_last_batch"]
         )
     else:
         vld_dataloader = None
@@ -251,7 +254,8 @@ def main(args):
         tst_dataloader = torch.utils.data.DataLoader(
             tst_data,
             batch_size=int(config['batch_size']),
-            shuffle=False
+            shuffle=False,
+            drop_last=args["drop_last_batch"]
         )
     else:
         tst_dataloader = None
@@ -567,6 +571,104 @@ def main(args):
             **kwargs
         )
 
+    elif 'TOAD' in config['name']:
+        text_input_layer = input_models.BertLayer(
+            use_cuda=use_cuda,
+            pretrained_model_name=config.get("bert_pretrained_model", "bert-base-uncased"),
+            layers=config.get("bert_layers", "-1"),
+            layers_agg_type=config.get("bert_layers_agg", "concat"),
+        )
+
+        topic_input_layer = input_models.BertLayer(
+            use_cuda=use_cuda,
+            pretrained_model_name=config.get("bert_pretrained_model", "bert-base-uncased"),
+            layers=config.get("bert_layers", "-1"),
+            layers_agg_type=config.get("bert_layers_agg", "concat"),
+        )
+
+        model = models.TOAD(
+            hidden_dim=int(config['lstm_hidden_dim']),
+            text_input_dim=text_input_layer.dim,
+            topic_input_dim=topic_input_layer.dim,
+            stance_dim=int(config['stance_classifier_dimension']),
+            topic_dim=int(config["topic_classifier_dimension"]),
+            num_topics=train_data.get_num_topics(),
+            num_layers=int(config.get("lstm_layers","1")),
+            num_labels=nl,
+            drop_prob=float(config.get('dropout', "0")),
+            use_cuda=use_cuda,
+        )
+        
+        loss_reduction = "none" if bool(int(config.get("sample_weights", "0"))) else "mean"
+        loss_fn = lf.TOADLoss(
+            trans_dim=2*int(config['lstm_hidden_dim']),
+            trans_param=float(config['transformation_loss_w']),
+            num_no_adv=float(config['num_no_adv_loss']),
+            tot_epochs=int(config['epochs']),
+            rho_adv=('rho_adv' in config),
+            gamma=float(config.get('gamma', 10.0)),
+            semi_sup=bool(config.get('semi_sup', False)),
+            use_cuda=use_cuda,
+            n_outputs=nl
+        )
+
+        optim_fn = torch.optim.Adam
+        opt_main_add_params = {
+            "lr": lr,
+            "weight_decay": float(config.get('l2_main', '0')),
+        }
+        opt_adv_add_params = {
+            "lr": lr,
+            "weight_decay": float(config.get('l2_adv', '0')),
+        }
+        if config.get('optimizer') == 'sgd':
+            optim_fn = torch.optim.SGD
+            sgd_dict = {
+                "momentum": 0.9,
+                "nesterov": True
+            }
+            opt_main_add_params.update(sgd_dict)
+            opt_adv_add_params.update(sgd_dict)
+            
+        opt_main = optim_fn(
+            itertools.chain(
+                model.enc.parameters(),
+                model.text_recon_layer.parameters(),
+                model.topic_recon_layer.parameters(),
+                model.trans_layer.parameters(),
+                model.stance_classifier.parameters()
+            ),
+            **opt_main_add_params
+        )
+        
+        opt_adv = optim_fn(
+            model.topic_classifier.parameters(),
+            **opt_adv_add_params
+        )
+
+        kwargs = {
+            'model': model,
+            'text_input_model': text_input_layer,
+            'topic_input_model': topic_input_layer,
+            'dataloader': trn_dataloader,
+            'name': config['name'] + args['name'],
+            'loss_function': loss_fn,
+            'optimizer': opt_main,
+            'adv_optimizer': opt_adv,
+            'tot_epochs': int(config['epochs']),
+            'initial_lr': lr,
+            'alpha': float(config.get('alpha', 10.0)),
+            'beta': float(config.get('beta', 0.75)),
+            'num_constant_lr': float(config['num_constant_lr']),
+            'is_joint_text_topic':config.get("is_joint"),
+        }
+
+        model_handler = model_utils.TOADTorchModelHandler(
+            checkpoint_path=config.get('ckp_path', 'data/checkpoints/'),
+            use_cuda=use_cuda,
+            **kwargs
+        )
+
     if args["mode"] == 'train':
         # Train model
         start_time = time.time()
@@ -648,6 +750,7 @@ if __name__ == "__main__":
     parser.add_argument('-s', '--save_ckp', dest="save_ckp", help='Whether to save checkpoints', required=False, default=0, type=int)
     parser.add_argument('-f', '--saved_model_file_name', dest="saved_model_file_name", required=False, default=None)
     parser.add_argument('-o', '--out_path', dest="out_path", help='Ouput file name', default='./pred')
+    parser.add_argument('-d', '--drop_last_batch', type=bool, dest="drop_last_batch", help="Whether to drop the last batch or not", default=False)
     args = vars(parser.parse_args())
 
     main(args)
@@ -679,6 +782,9 @@ if __name__ == "__main__":
 
 # train CrossNet (Simple Domain)
 # python train_model.py -m train -c ../../config/Bert_CrossNet_example.txt -t ../../../data/ustancebr/v2/simple_domain/final_bo_train.csv -v ../../../data/ustancebr/v2/simple_domain/final_bo_valid.csv -p ../../../data/ustancebr/v2/simple_domain/final_bo_test.csv -n bo -e 2 -s 1
+
+# train TOAD (Hold1TopicOut)
+# python train_model.py -m train -c ../../config/Bert_TOAD_example.txt -t ../../../data/ustancebr/v2/hold1topic_out/final_bo_train.csv -v ../../../data/ustancebr/v2/hold1topic_out/final_bo_valid.csv -p ../../../data/ustancebr/v2/hold1topic_out/final_bo_test.csv -n bo -e 2 -s 1
 
 ## VM
 # train BiCondBertLstm

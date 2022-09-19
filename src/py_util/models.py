@@ -302,3 +302,121 @@ class CrossNet(torch.nn.Module):
         y_pred = self.pred_layer(att_vec_drop) # (B, 2)
 
         return y_pred
+
+class TOAD(torch.nn.Module):
+    def __init__(self, hidden_dim, text_input_dim, topic_input_dim,
+                       stance_dim, topic_dim, num_topics, num_layers=1,
+                       num_labels=3, drop_prob=0, use_cuda=False):
+        super(TOAD, self).__init__()
+
+        self.hidden_dim = hidden_dim
+        self.text_input_dim = text_input_dim
+        self.topic_input_dim = topic_input_dim
+        self.stance_dim = stance_dim
+        self.topic_dim = topic_dim
+        self.num_topics = num_topics
+        self.num_layers = num_layers
+        self.num_labels = num_labels
+        self.output_dim = 1 if self.num_labels == 2 else self.num_labels
+        self.use_cuda = use_cuda
+        
+        self.enc = ml.BiCondLSTMLayer(
+            hidden_dim=self.hidden_dim,
+            text_input_dim=self.text_input_dim,
+            topic_input_dim=self.topic_input_dim,
+            num_layers=self.num_layers,
+            lstm_dropout=drop_prob,
+            use_cuda=self.use_cuda,
+        )
+
+        self.att_layer = ml.TOADScaledDotProductAttentionLayer(
+            input_dim=2*self.hidden_dim,
+            use_cuda=self.use_cuda
+        )
+        
+        self.in_dropout = nn.Dropout(p=drop_prob)
+        self.out_dropout = nn.Dropout(p=drop_prob)
+
+        self.text_recon_layer = ml.TOADReconstructionLayer(
+            hidden_dim=self.hidden_dim,
+            embed_dim=self.text_input_dim,
+            use_cuda=self.use_cuda
+        )
+
+        self.topic_recon_layer = ml.TOADReconstructionLayer(
+            hidden_dim=self.hidden_dim,
+            embed_dim=self.topic_input_dim,
+            use_cuda=self.use_cuda
+        )
+
+        self.trans_layer = ml.TOADTransformationLayer(
+            input_size=2*self.hidden_dim,
+            use_cuda=self.use_cuda
+        )
+
+        multiplier = 4
+        self.stance_classifier = ml.TwoLayerFFNNLayer(
+            input_dim=multiplier*self.hidden_dim,
+            hidden_dim=self.stance_dim,
+            output_dim=self.output_dim,
+            activation_fn=nn.ReLU(),
+            use_cuda=self.use_cuda
+        )
+
+        self.topic_classifier = ml.TwoLayerFFNNLayer(
+            input_dim=2*self.hidden_dim,
+            hidden_dim=topic_dim,
+            output_dim=self.num_topics,
+            activation_fn=nn.ReLU(),
+            use_cuda=self.use_cuda
+        )
+
+    def forward(self, text_embeddings, topic_embeddings, text_length, topic_length, text_mask=None, topic_mask=None):
+        # text: (B, T, E), topic: (B, C, E), text_l: (B), topic_l: (B), text_mask: (B, T), topic_mask: (B, C)
+
+        # apply dropout on the input
+        dropped_text = self.in_dropout(text_embeddings)
+
+        dropped_text = dropped_text.transpose(0, 1) # (T, B, E)
+        topic_embeddings_t = topic_embeddings.transpose(0, 1) # (C, B, E)
+
+        # encode the text
+        text_output, _, last_top_hn, topic_output = self.enc(dropped_text, topic_embeddings_t, text_length, topic_length)
+
+        text_output = text_output.transpose(0, 1)     #output represents the token level text encodings of size (B,T,2*H)
+        topic_output = topic_output.transpose(0, 1)   #Token levek topic embeddings of size (B, C, 2*H)
+        last_top_hn = last_top_hn.transpose(0, 1).reshape(-1, 2*self.hidden_dim)        #(B, 2*H)
+        att_vecs = self.att_layer(text_output, last_top_hn)      #(B, 2H)
+
+        # reconstruct the original text embeddings
+        text_recon_embeds = self.text_recon_layer(text_output, text_mask) #(B, L, E)
+        # reconstruct the original topic embeddings
+        topic_recon_embeds = self.topic_recon_layer(topic_output, topic_mask)
+
+        # transform the representation
+        trans_reps = self.trans_layer(att_vecs) #(B, 2H)
+
+        trans_reps = self.out_dropout(trans_reps)  # adding dropout
+        last_top_hn = self.out_dropout(last_top_hn)
+
+        # stance prediction
+        # added topic input to stance classifier
+        stance_input = torch.cat((trans_reps, last_top_hn), 1)      #(B, 4H)
+        stance_preds = self.stance_classifier(stance_input)
+
+        # topic prediction
+        topic_preds = self.topic_classifier(trans_reps)
+        topic_preds_ = self.topic_classifier(trans_reps.detach())
+
+        pred_info = {
+            'text': text_embeddings,
+            'text_l': text_length,
+            'topic': topic_embeddings,
+            'topic_l': topic_length,
+            'adv_pred': topic_preds,
+            'adv_pred_': topic_preds_,
+            'stance_pred': stance_preds,
+            'text_recon_embeds': text_recon_embeds,
+            'topic_recon_embeds': topic_recon_embeds,
+        }
+        return pred_info
