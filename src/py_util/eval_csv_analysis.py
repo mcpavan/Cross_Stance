@@ -58,7 +58,7 @@ df["bert"] = df.apply(get_bert_model_name, axis=1)
 
 best_valid = df.groupby(grp_cols_source) \
                .apply(lambda x: get_max_value_row(x, "valid_fmacro")) \
-               [["test_fmacro", "test_pmacro", "test_rmacro"]] #\
+               [["test_fmacro", "test_pmacro", "test_rmacro", "version"]] #\
             #    .unstack("destination_topic")
 best_valid.to_csv(f"{data_path}/best_valid_metrics_full_test.csv")
 
