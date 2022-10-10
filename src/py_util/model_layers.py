@@ -1,4 +1,5 @@
 import math
+from turtle import forward
 import torch
 import torch.nn as nn
 import torch.nn.utils.rnn as rnn
@@ -470,3 +471,50 @@ class TOADReconstructionLayer(torch.nn.Module):
         recon_embeds = torch.einsum('ble,bl->ble', recon_embeds, text_mask)
         
         return recon_embeds
+
+class AADDiscriminator(nn.Module):
+    """AAD Discriminator model for source domain."""
+
+    def __init__(self, intermediate_size, use_cuda=False):
+        """Init discriminator."""
+        super(AADDiscriminator, self).__init__()
+        self.use_cuda = use_cuda
+        self.layer = nn.Sequential(
+            nn.LazyLinear(intermediate_size),
+            nn.LeakyReLU(),
+            nn.Linear(intermediate_size, intermediate_size),
+            nn.LeakyReLU(),
+            nn.Linear(intermediate_size, 1),
+            nn.Sigmoid()
+        )
+        if self.use_cuda:
+            self.layer.to("cuda")
+
+    def forward(self, x):
+        """Forward the discriminator."""
+        batch_size = x.shape[0]
+        x = x.reshape(batch_size, -1)
+        out = self.layer(x)
+        return out
+
+class AADClassifier(nn.Module):
+    """AAD Classifier model for stance prediction."""
+
+    def __init__(self, input_dim, output_dim, drop_prob=0, use_cuda=False):
+        super(AADClassifier, self).__init__()
+        
+        self.use_cuda = use_cuda
+        self.input_dim = input_dim
+        self.output_dim = output_dim
+        
+        self.dropout_layer = nn.Dropout(p=drop_prob)
+        self.classifier = PredictionLayer(
+            input_dim=self.input_dim,
+            output_dim=self.output_dim,
+            use_cuda=self.use_cuda
+        )
+    
+    def forward(self, x):
+        x = self.dropout_layer(x)
+        out = self.classifier(x)
+        return out

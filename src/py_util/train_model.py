@@ -51,7 +51,7 @@ def eval_helper(model_handler, data_name, data=None):
     # eval on full corpus
     return model_handler.eval_and_print(data=data, data_name=data_name) #(score, avg_loss)
 
-def train(model_handler, num_epochs, early_stopping_patience=0, verbose=True, vld_data=None, tst_data=None):
+def train(model_handler, num_epochs, early_stopping_patience=0, verbose=True, vld_data=None, tst_data=None, train_step_fn=None):
     '''
     Trains the given model using the given data for the specified
     number of epochs. Prints training loss and evaluation. Saves at
@@ -70,8 +70,11 @@ def train(model_handler, num_epochs, early_stopping_patience=0, verbose=True, vl
     last_vld_loss = float("inf")
     greater_loss_epochs = 0
 
+    if train_step_fn is None:
+        train_step_fn = model_handler.train_step
+
     for epoch in range(num_epochs):
-        model_handler.train_step()
+        train_step_fn()
         # print training loss 
         print("Total training loss: {}".format(model_handler.loss))
 
@@ -146,6 +149,37 @@ def train(model_handler, num_epochs, early_stopping_patience=0, verbose=True, vl
             data=tst_data
         )
 
+def train_AAD(model_handler, num_epochs, early_stopping_patience=0, verbose=True, vld_data=None, tst_data=None):
+    '''
+    Trains the given AAD model using the given data for the specified
+    number of epochs. Prints training loss and evaluation. Saves at
+    most 1 checkpoint plus a final one.
+    :param model_handler: a holder with a model and data to be trained.
+                            Assuming the model is a pytorch model.
+    :param num_epochs: the number of epochs to train the model for.
+    :param verbose: whether or not to print train results while training.
+                    Default (True): do print intermediate results.
+    '''
+    train(
+        model_handler=model_handler,
+        num_epochs=num_epochs,
+        early_stopping_patience=early_stopping_patience,
+        verbose=verbose,
+        vld_data=vld_data,
+        tst_data=tst_data,
+        train_step_fn=model_handler.pretrain_step,
+    )
+
+    train(
+        model_handler=model_handler,
+        num_epochs=num_epochs,
+        early_stopping_patience=early_stopping_patience,
+        verbose=verbose,
+        vld_data=vld_data,
+        tst_data=tst_data,
+        train_step_fn=model_handler.adapt_step,
+    )
+
 def save_predictions(model_handler, dev_data, dev_dataloader, out_name, config, is_test=False, is_valid=False):#, correct_preds=False):
     # trn_results = model_handler.predict()
     # trn_preds = trn_results[0]
@@ -214,6 +248,7 @@ def main(args):
     #############
     # load training data
     batch_size = int(config['batch_size'])
+    train_fn = train
     if args['trn_data'] is not None:
         train_data = load_data(config, args, data_key="trn")
         train_n_batches = math.ceil(len(train_data) / batch_size)
@@ -668,11 +703,96 @@ def main(args):
             use_cuda=use_cuda,
             **kwargs
         )
+    
+    elif 'AAD' in config['name']:
+        train_fn = train_AAD
+        tgt_train_data = load_data(config, args, data_key="tgt_trn")
+        tgt_train_n_batches = math.ceil(len(tgt_train_data) / batch_size)
+        print(f"# of Training instances: {len(tgt_train_data)}. Batch Size={batch_size}. # of batches: {tgt_train_n_batches}")
+
+        tgt_trn_dataloader = torch.utils.data.DataLoader(
+            tgt_train_data,
+            batch_size=int(config['batch_size']),
+            shuffle=True,
+            drop_last=args["drop_last_batch"]
+        )
+
+        src_input_layer = input_models.BertLayer(
+            use_cuda=use_cuda,
+            pretrained_model_name=config.get("bert_pretrained_model", "bert-base-uncased"),
+            layers=config.get("bert_layers", "-1"),
+            layers_agg_type=config.get("bert_layers_agg", "concat"),
+        )
+
+        tgt_input_layer = input_models.BertLayer(
+            use_cuda=use_cuda,
+            pretrained_model_name=config.get("bert_pretrained_model", "bert-base-uncased"),
+            layers=config.get("bert_layers", "-1"),
+            layers_agg_type=config.get("bert_layers_agg", "concat"),
+        )
+
+        model = models.AAD(
+            text_input_dim=src_input_layer.dim,
+            src_encoder=src_input_layer,
+            tgt_encoder=tgt_input_layer,
+            discriminator_dim=int(config['discriminator_dim']),
+            num_labels=nl,
+            drop_prob=float(config.get('dropout', "0")),
+            use_cuda=use_cuda,
+        )
+
+        loss_reduction = "none" if bool(int(config.get("sample_weights", "0"))) else "mean"
+        if nl < 3:
+            src_encoder_loss_fn = torch.nn.BCELoss(reduction=loss_reduction)
+            tgt_encoder_loss_fn = torch.nn.BCELoss(reduction=loss_reduction)
+        else:
+            src_encoder_loss_fn = torch.nn.CrossEntropyLoss(reduction=loss_reduction)
+            tgt_encoder_loss_fn = torch.nn.CrossEntropyLoss(reduction=loss_reduction)
+        disc_loss = torch.nn.BCELoss()
+        
+        src_encoder_opt = torch.optim.AdamW(
+            list(src_input_layer.parameters()) + list(model.classifier.parameters()),
+            lr = float(config.get('learning_rate', '2e-5')),
+            eps = 1e-8
+        )
+        tgt_encoder_opt = torch.optim.Adam(
+            tgt_input_layer.parameters(),
+            lr = float(config.get('discriminator_learning_rate', '1e-5')),
+        )
+        discriminator_opt = torch.optim.Adam(
+            model.discriminator.parameters(),
+            lr = float(config.get('discriminator_learning_rate', '1e-5'))
+        )
+        kwargs = {
+            'model': model,
+            'tgt_dataloader': tgt_trn_dataloader,
+            'text_input_model': src_input_layer,
+            'tgt_text_input_model': tgt_input_layer,
+            'dataloader': trn_dataloader,
+            'name': config['name'] + args['name'],
+            'loss_function': src_encoder_loss_fn,
+            'optimizer': src_encoder_opt,
+            'discriminator_loss_fn': disc_loss,
+            'discriminator_clip_value': float(config.get('discriminator_clip_value', '0.01')),
+            'discriminator_optimizer': discriminator_opt,
+            'tgt_encoder_optimizer': tgt_encoder_opt,
+            'tgt_encoder_temperature': int(config.get('tgt_encoder_temperature', '20')),
+            'tgt_encoder_loss_fn': tgt_encoder_loss_fn,
+            'tgt_loss_alpha': float(config.get('tgt_loss_alpha', '1.0')),
+            'tgt_loss_beta': float(config.get('tgt_loss_beta', '1.0')),
+            'max_grad_norm': float(config.get('max_grad_norm', '1.0')),
+        }
+
+        model_handler = model_utils.AADTorchModelHandler(
+            checkpoint_path=config.get('ckp_path', 'data/checkpoints/'),
+            use_cuda=use_cuda,
+            **kwargs
+        )
 
     if args["mode"] == 'train':
         # Train model
         start_time = time.time()
-        train(
+        train_fn(
             model_handler=model_handler,
             num_epochs=int(config['epochs']),
             early_stopping_patience=args.get("early_stop", 0),
@@ -741,6 +861,7 @@ if __name__ == "__main__":
     parser.add_argument('-m', '--mode', dest="mode", help='What to do', required=True)
     parser.add_argument('-c', '--config_file', dest="config_file", help='Name of the cofig data file', required=False)
     parser.add_argument('-t', '--trn_data', dest="trn_data", help='Name of the training data file', required=False)
+    parser.add_argument('-g', '--tgt_trn_data', dest="tgt_trn_data", help='Name of the training data file containing only the target domain (exclusive for AAD)', required=False)
     parser.add_argument('-v', '--vld_data', dest="vld_data", help='Name of the validation data file', default=None, required=False)
     parser.add_argument('-p', '--tst_data', dest="tst_data", help='Name of the test data file', default=None, required=False)
     parser.add_argument('-n', '--name', dest="name", help='something to add to the saved model name', required=False, default='')
@@ -786,6 +907,10 @@ if __name__ == "__main__":
 # train TOAD (Hold1TopicOut)
 # python train_model.py -m train -c ../../config/Bert_TOAD_example.txt -t ../../../data/ustancebr/v2/hold1topic_out/final_bo_train.csv -v ../../../data/ustancebr/v2/hold1topic_out/final_bo_valid.csv -p ../../../data/ustancebr/v2/hold1topic_out/final_bo_test.csv -n bo -e 2 -s 1
 
+# train AAD (Simple Domain)
+# python train_model.py -m train -c ../../config/Bert_AAD_example.txt -t ../../../data/ustancebr/v2/simple_domain/final_lu_train.csv -t ../../../data/ustancebr/v2/simple_domain/final_bo_train.csv -v ../../../data/ustancebr/v2/simple_domain/final_bo_valid.csv -p ../../../data/ustancebr/v2/simple_domain/final_bo_test.csv -n bo -e 2 -s 1
+
+
 ## VM
 # train BiCondBertLstm
 # nohup python train_model.py -m train -c ../../config/Bert_BiCondLstm_example_v0.txt -t ../../data/ustancebr/v2/hold1topic_out/final_bo_train.csv -v ../../data/ustancebr/v2/hold1topic_out/final_bo_valid.csv -n bo -e 5 -s 1 &
@@ -798,3 +923,4 @@ if __name__ == "__main__":
 # train BertBiLSTMAttn (Simple Domain)
 # nohup python train_model.py -m train -c ../../config/Bert_BiLstmAttn_example.txt -t ../../data/ustancebr/v2/simple_domain/final_bo_train.csv -v ../../data/ustancebr/v2/simple_domain/final_bo_valid.csv -p ../../data/ustancebr/v2/simple_domain/final_bo_test.csv -n bo -e 5 -s 1 &
 # nohup python train_model.py -m train -c ../../config/Bert_BiLstmAttn_example.txt -t ../../data/ustancebr/v2/simple_domain/final_bo_test.csv -v ../../data/ustancebr/v2/simple_domain/final_bo_test.csv -p ../../data/ustancebr/v2/simple_domain/final_bo_test.csv -n bo -e 5 -s 1 &
+

@@ -420,3 +420,33 @@ class TOAD(torch.nn.Module):
             'topic_recon_embeds': topic_recon_embeds,
         }
         return pred_info
+
+class AAD(torch.nn.Module):
+    def __init__(self, src_encoder, tgt_encoder, text_input_dim, discriminator_dim,
+                 num_labels=3, drop_prob=0, use_cuda=False):
+        super(AAD, self).__init__()
+
+        self.text_input_dim = text_input_dim
+        self.discriminator_dim = discriminator_dim
+        self.num_labels = num_labels
+        self.output_dim = 1 if self.num_labels == 2 else self.num_labels
+        self.use_cuda = use_cuda
+
+        self.src_encoder = src_encoder
+        self.tgt_encoder = tgt_encoder
+
+        self.classifier = ml.AADClassifier(
+            input_dim=self.text_input_dim,
+            output_dim=self.output_dim,
+            use_cuda=self.use_cuda
+        )
+
+        self.discriminator = ml.AADDiscriminator(
+            intermediate_size=self.discriminator_dim,
+            use_cuda=self.use_cuda
+        )
+
+    def forward(self, text_embeddings, **kwargs):
+        # text: (B, T, E)
+        y_pred = self.classifier(text_embeddings)
+        return y_pred

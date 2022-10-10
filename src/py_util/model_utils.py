@@ -92,8 +92,7 @@ class TorchModelHandler:
 
         for batch_n, batch_data in tqdm(enumerate(self.dataloader)):
             #zero gradients before every optimizer step
-            # label_tensor = batch_data["label"][0].reshape(-1,1).type(torch.FloatTensor)
-            label_tensor = torch.stack(batch_data["label"]).T
+            label_tensor = torch.stack(batch_data["label"]).T.type(torch.FloatTensor)
             if len(label_tensor.shape) > 1 and label_tensor.shape[-1] != 1:
                 label_tensor = label_tensor.argmax(dim=1).reshape(-1,1)
             
@@ -198,7 +197,7 @@ class TorchModelHandler:
         for batch_n, batch_data in tqdm(enumerate(data)):
             with torch.no_grad():
                 #zero gradients before every optimizer step
-                label_tensor = torch.stack(batch_data["label"]).T
+                label_tensor = torch.stack(batch_data["label"]).T.type(torch.FloatTensor)
                 if len(label_tensor.shape) > 1 and label_tensor.shape[-1] != 1:
                     label_tensor = label_tensor.argmax(dim=1).reshape(-1,1)
                 
@@ -493,3 +492,249 @@ class TOADTorchModelHandler(TorchModelHandler):
         score_dict = self.score(stance_pred, stance_labels)
 
         return score_dict, loss
+
+class AADTorchModelHandler(TorchModelHandler):
+    def __init__(self, num_ckps=1, checkpoint_path='./data/checkpoints/', use_cuda=False, **params):
+
+        TorchModelHandler.__init__(
+            self,
+            num_ckps=num_ckps,
+            checkpoint_path=checkpoint_path,
+            use_cuda=use_cuda,
+            **params
+        )
+
+        self.tgt_dataloader = params["tgt_dataloader"]
+        self.src_encoder = self.text_input_model
+        self.tgt_encoder = params["tgt_text_input_model"]
+
+        self.discriminator_loss_fn = params["discriminator_loss_fn"]
+        self.discriminator_clip_value = params["discriminator_clip_value"]
+        self.discriminator_optimizer = params["discriminator_optimizer"]
+        
+        self.tgt_encoder_optimizer = params["tgt_encoder_optimizer"]
+        self.tgt_encoder_temperature = params["tgt_encoder_temperature"]
+        self.tgt_encoder_loss_fn = params["tgt_encoder_loss_fn"]
+        self.tgt_loss_alpha = params["tgt_loss_alpha"]
+        self.tgt_loss_beta = params["tgt_loss_beta"]
+        self.max_grad_norm = params["max_grad_norm"]
+
+    def pretrain_step(self):
+        '''
+        Runs one epoch of training on this model.
+        '''
+        print(f"[{self.name}] epoch {self.epoch}")
+        self.model.train()
+        self.src_encoder.train()
+       
+        self.loss = 0
+        # partial_loss = 0
+        start_time = time.time()
+
+        for batch_n, batch_data in tqdm(enumerate(self.dataloader)):
+            #zero gradients before every optimizer step
+            label_tensor = torch.stack(batch_data["label"]).T.type(torch.FloatTensor)
+            if len(label_tensor.shape) > 1 and label_tensor.shape[-1] != 1:
+                label_tensor = label_tensor.argmax(dim=1).reshape(-1,1)
+            
+            if self.use_cuda:
+                label_tensor = label_tensor.to("cuda")
+
+            self.model.zero_grad()
+            
+            # get the embeddings for text and topic and creates a dict to pass as params to the model
+            text_embeddings = self.src_encoder(**batch_data["text"])[:,-1,:]
+
+            #apply the text and topic embeddings to the model
+            y_pred = self.model(text_embeddings=text_embeddings)
+
+            # calculate the loss, and backprogate it to update weights
+            graph_loss = self.loss_function(y_pred, label_tensor)
+            if "sample_weight" in batch_data:
+                weight_lst = batch_data["sample_weight"]
+                if self.use_cuda:
+                    weight_lst = weight_lst.to('cuda')
+                graph_loss = torch.mean(graph_loss * weight_lst)
+            
+            graph_loss.backward()
+            self.optimizer.step()
+
+            #sum the loss
+            # partial_loss += graph_loss.item()
+            self.loss += graph_loss.item()
+
+        total_time = (time.time() - start_time)/60
+        print(f"    took: {total_time:.2f} min")
+
+        self.epoch += 1
+
+    def adapt_step(self):
+        '''
+        Runs one epoch of adapt process on this model.
+        '''
+        print(f"[{self.name}] epoch {self.epoch}")
+        # set train state to the right models
+        self.src_encoder.eval()
+        self.model.classifier.eval()
+        self.tgt_encoder.train()
+        self.model.discriminator.train()
+       
+        self.discriminator_loss = 0
+        # partial_loss = 0
+        start_time = time.time()
+
+        data_iter = tqdm(enumerate(zip(self.dataloader, self.tgt_dataloader)))
+        for batch_n, (src_batch_data, tgt_batch_data) in data_iter:
+            # make sure only equal size batches are used from both source and target domain
+            if len(src_batch_data["label"]) != len(tgt_batch_data["label"]):
+                continue
+
+            # def get_label_tensor(x, use_cuda):
+            #     x_tensor = torch.stack(x).T
+            #     if len(x_tensor.shape) > 1 and x_tensor.shape[-1] != 1:
+            #         x_tensor = x_tensor.argmax(dim=1).reshape(-1,1)
+                
+            #     if use_cuda:
+            #         x_tensor = x_tensor.to("cuda")
+            #     return x_tensor
+
+            # stance_lbl_src = get_label_tensor(src_batch_data["label"], self.use_cuda)
+            # stance_lbl_tgt = get_label_tensor(tgt_batch_data["label"], self.use_cuda)
+
+            #zero gradients before every optimizer step
+            self.model.zero_grad()
+            
+            # get the embeddings for src and tgt text using the tgt_encoder and concat them to pass to the discriminator
+            with torch.no_grad():
+                src_text_embeddings = self.src_encoder(**src_batch_data["text"])[:,-1,:]
+            src_tgt_text_embeddings = self.tgt_encoder(**src_batch_data["text"])[:,-1,:]
+            tgt_text_embeddings = self.tgt_encoder(**tgt_batch_data["text"])
+            embeddings_concat = torch.cat((src_tgt_text_embeddings, tgt_text_embeddings), 0)
+
+            # prepare real and fake label to calculate the discriminator loss
+            domain_label_src = torch.ones(src_tgt_text_embeddings.size(0)).unsqueeze(1)
+            domain_label_tgt = torch.zeros(tgt_text_embeddings.size(0)).unsqueeze(1)
+
+            if self.use_cuda:
+                domain_label_src = domain_label_src.to("cuda")
+                domain_label_tgt = domain_label_tgt.to("cuda")
+            
+            domain_label_concat = torch.cat((domain_label_src, domain_label_tgt), 0)
+
+            # predict on discriminator
+            domain_pred_concat = self.model.discriminator(embeddings_concat.detach())
+
+            # calculate the loss, and backprogate it to update weights
+            graph_loss = self.discriminator_loss_fn(domain_pred_concat, domain_label_concat)
+            if "sample_weight" in src_batch_data or "sample_weight" in tgt_batch_data:
+                if "sample_weight" in src_batch_data:
+                    weight_lst = src_batch_data["sample_weight"]
+                else:
+                    weight_lst = [1] * len(src_batch_data["label"])
+                
+                if "sample_weight" in tgt_batch_data:
+                    weight_lst = tgt_batch_data["sample_weight"]
+                else:
+                    weight_lst = [1] * len(tgt_batch_data["label"])
+            
+                if self.use_cuda:
+                    weight_lst = weight_lst.to('cuda')
+                graph_loss = torch.mean(graph_loss * weight_lst)
+            
+            graph_loss.backward()
+            
+            #clip the values if necessary
+            if self.discriminator_clip_value:
+                for p in self.model.discriminator.parameters():
+                    p.data.clamp_(-self.discriminator_clip_value, self.discriminator_clip_value)
+
+            self.discriminator_optimizer.step()
+            #sum the loss
+            self.discriminator_loss += graph_loss.item()
+
+            # zero gradients for optimizer
+            self.tgt_encoder_optimizer.zero_grad()
+            T = self.tgt_encoder_temperature
+
+            # predict on discriminator
+            pred_tgt = self.model.discriminator(tgt_text_embeddings)
+
+            # logits for KL-divergence
+            with torch.no_grad():
+                src_prob = torch.nn.functional.softmax(self.model.classifier(src_text_embeddings) / T, dim=-1)
+            tgt_prob = torch.nn.functional.log_softmax(self.model.classifier(src_tgt_text_embeddings) / T, dim=-1)
+            kd_loss = torch.nn.KLDivLoss(tgt_prob, src_prob.detach()) * T * T
+
+            # compute loss for target encoder
+            tgt_encoder_loss = self.tgt_encoder_loss_fn(pred_tgt, domain_label_src)
+            loss_tgt = self.tgt_loss_alpha * tgt_encoder_loss + self.tgt_loss_beta * kd_loss
+            loss_tgt.backward()
+            torch.nn.utils.clip_grad_norm_(self.tgt_encoder.parameters(), self.max_grad_norm)
+            # optimize target encoder
+            self.tgt_encoder_optimizer.step()
+
+        total_time = (time.time() - start_time)/60
+        print(f"    took: {total_time:.2f} min")
+
+        self.epoch += 1
+
+    def predict(self, data=None, encoder=None):
+        self.model.eval()
+        self.src_encoder.eval()
+        self.tgt_encoder.eval()
+        
+        partial_main_loss = 0
+
+        all_stance_pred = None
+        all_stance_labels = None
+
+        all_topic_pred = None
+        all_topic_labels = None
+
+        if data is None:
+            data = self.dataloader
+        
+        if encoder is None:
+            encoder = self.tgt_encoder
+
+        for batch_n, batch_data in tqdm(enumerate(data)):
+            with torch.no_grad():
+                #zero gradients before every optimizer step
+                label_tensor = torch.stack(batch_data["label"]).T.type(torch.FloatTensor)
+                if len(label_tensor.shape) > 1 and label_tensor.shape[-1] != 1:
+                    label_tensor = label_tensor.argmax(dim=1).reshape(-1,1)
+
+                if batch_n:
+                    all_stance_labels = torch.cat((all_stance_labels, label_tensor))
+                else:
+                    all_stance_labels = label_tensor
+
+                if self.use_cuda:
+                    label_tensor = label_tensor.to("cuda")
+            
+                # get the embeddings for text and topic and creates a dict to pass as params to the model
+                text_embeddings = encoder(**batch_data["text"])[:,-1,:]
+
+                #apply the text and topic embeddings to the model
+                y_pred = self.model(text_embeddings=text_embeddings)
+
+                if batch_n:
+                    all_stance_pred = torch.cat((all_stance_pred, y_pred.cpu()))
+                else:
+                    all_stance_pred = y_pred.cpu()
+
+                # calculate the loss, and backprogate it to update weights
+                graph_loss = self.loss_function(y_pred, label_tensor)
+                if "sample_weight" in batch_data:
+                    weight_lst = batch_data["sample_weight"]
+                    if self.use_cuda:
+                        weight_lst = weight_lst.to('cuda')
+                    graph_loss = torch.mean(graph_loss * weight_lst)
+                
+                partial_main_loss += graph_loss.item()
+
+            #sum the loss
+            # partial_loss += graph_loss.item()
+        avg_loss = partial_main_loss / batch_n #loss per batch
+
+        return all_stance_pred, all_stance_labels, avg_loss

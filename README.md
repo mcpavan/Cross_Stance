@@ -5,6 +5,8 @@ Cross-Target stance detection
 
 - python==3.7.10
 - numpy==1.19.2
+- matplotlib==3.5.2
+- seaborn==0.11.2
 - pandas==1.2.4
 - tqdm==4.59.0
 - scikit-learn==0.24.2
