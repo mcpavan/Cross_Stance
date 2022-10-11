@@ -160,6 +160,9 @@ def train_AAD(model_handler, num_epochs, early_stopping_patience=0, verbose=True
     :param verbose: whether or not to print train results while training.
                     Default (True): do print intermediate results.
     '''
+    print("*"*25)
+    print("Pre-Training")
+    print("*"*25)
     train(
         model_handler=model_handler,
         num_epochs=num_epochs,
@@ -170,6 +173,9 @@ def train_AAD(model_handler, num_epochs, early_stopping_patience=0, verbose=True
         train_step_fn=model_handler.pretrain_step,
     )
 
+    print("*"*25)
+    print("Adapting")
+    print("*"*25)
     train(
         model_handler=model_handler,
         num_epochs=num_epochs,
@@ -908,7 +914,8 @@ if __name__ == "__main__":
 # python train_model.py -m train -c ../../config/Bert_TOAD_example.txt -t ../../../data/ustancebr/v2/hold1topic_out/final_bo_train.csv -v ../../../data/ustancebr/v2/hold1topic_out/final_bo_valid.csv -p ../../../data/ustancebr/v2/hold1topic_out/final_bo_test.csv -n bo -e 2 -s 1
 
 # train AAD (Simple Domain)
-# python train_model.py -m train -c ../../config/Bert_AAD_example.txt -t ../../../data/ustancebr/v2/simple_domain/final_lu_train.csv -t ../../../data/ustancebr/v2/simple_domain/final_bo_train.csv -v ../../../data/ustancebr/v2/simple_domain/final_bo_valid.csv -p ../../../data/ustancebr/v2/simple_domain/final_bo_test.csv -n bo -e 2 -s 1
+# python train_model.py -m train -c ../../config/Bert_AAD_example.txt -t ../../data/ustancebr/v2/simple_domain/final_lu_train.csv -g ../../data/ustancebr/v2/simple_domain/final_bo_train.csv -v ../../data/ustancebr/v2/simple_domain/final_bo_valid.csv -p ../../data/ustancebr/v2/simple_domain/final_bo_test.csv -n bo -e 2 -s 1
+# python train_model.py -m train -c ../../config/Bert_AAD_example.txt -t ../../data/ustancebr/v2/teste_pqno/pqno_lu_train.csv -g ../../data/ustancebr/v2/teste_pqno/pqno_bo_train.csv -v ../../data/ustancebr/v2/teste_pqno/pqno_bo_train.csv -p ../../data/ustancebr/v2/teste_pqno/pqno_bo_test.csv -n bo -e 2 -s 1
 
 
 ## VM

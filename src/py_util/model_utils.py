@@ -519,6 +519,8 @@ class AADTorchModelHandler(TorchModelHandler):
         self.tgt_loss_beta = params["tgt_loss_beta"]
         self.max_grad_norm = params["max_grad_norm"]
 
+        self.KLDivLoss = torch.nn.KLDivLoss(reduction='batchmean')
+
     def pretrain_step(self):
         '''
         Runs one epoch of training on this model.
@@ -608,7 +610,7 @@ class AADTorchModelHandler(TorchModelHandler):
             with torch.no_grad():
                 src_text_embeddings = self.src_encoder(**src_batch_data["text"])[:,-1,:]
             src_tgt_text_embeddings = self.tgt_encoder(**src_batch_data["text"])[:,-1,:]
-            tgt_text_embeddings = self.tgt_encoder(**tgt_batch_data["text"])
+            tgt_text_embeddings = self.tgt_encoder(**tgt_batch_data["text"])[:,-1,:]
             embeddings_concat = torch.cat((src_tgt_text_embeddings, tgt_text_embeddings), 0)
 
             # prepare real and fake label to calculate the discriminator loss
@@ -663,11 +665,19 @@ class AADTorchModelHandler(TorchModelHandler):
             with torch.no_grad():
                 src_prob = torch.nn.functional.softmax(self.model.classifier(src_text_embeddings) / T, dim=-1)
             tgt_prob = torch.nn.functional.log_softmax(self.model.classifier(src_tgt_text_embeddings) / T, dim=-1)
-            kd_loss = torch.nn.KLDivLoss(tgt_prob, src_prob.detach()) * T * T
 
-            # compute loss for target encoder
+            kd_loss = self.KLDivLoss(tgt_prob, src_prob.detach()) * T * T
             tgt_encoder_loss = self.tgt_encoder_loss_fn(pred_tgt, domain_label_src)
             loss_tgt = self.tgt_loss_alpha * tgt_encoder_loss + self.tgt_loss_beta * kd_loss
+
+            # multiply by the weights, if any, and calculate the mean value
+            if "sample_weight" in tgt_batch_data:
+                tgt_weight_lst = tgt_batch_data["sample_weight"]
+                if self.use_cuda:
+                    tgt_weight_lst = tgt_weight_lst.to('cuda')
+                loss_tgt = torch.mean(loss_tgt * tgt_weight_lst)
+
+            # compute loss for target encoder
             loss_tgt.backward()
             torch.nn.utils.clip_grad_norm_(self.tgt_encoder.parameters(), self.max_grad_norm)
             # optimize target encoder
