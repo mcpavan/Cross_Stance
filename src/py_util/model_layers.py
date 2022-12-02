@@ -1,5 +1,4 @@
 import math
-from turtle import forward
 import torch
 import torch.nn as nn
 import torch.nn.utils.rnn as rnn
@@ -518,3 +517,5 @@ class AADClassifier(nn.Module):
         x = self.dropout_layer(x)
         out = self.classifier(x)
         return out
+
+# JointCL

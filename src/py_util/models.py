@@ -1,4 +1,4 @@
-from copy import deepcopy
+# from copy import deepcopy
 import torch
 import torch.nn as nn
 import model_layers as ml
@@ -450,3 +450,7 @@ class AAD(torch.nn.Module):
         # text: (B, T, E)
         y_pred = self.classifier(text_embeddings)
         return y_pred
+
+#JOINT CL
+# https://github.com/HITSZ-HLT/JointCL/blob/4da3e0f7511366797506dcbb74e69ba455532e14/run_semeval.py#L164
+from JointCL_model import BERT_SCL_Proto_Graph as JointCL

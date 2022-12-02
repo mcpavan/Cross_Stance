@@ -6,7 +6,7 @@ import time
 import torch
 import pandas as pd
 
-import datasets, models, input_models, model_utils, loss_fn as lf
+import datasets, models, input_models, model_utils, loss_fn as lf, JointCL_loss
 
 SEED = 0
 use_cuda = torch.cuda.is_available()
@@ -23,7 +23,7 @@ def load_data(config, args, data_key="trn"):
     if 'bert' in config or 'bert' in config['name']:
         data = datasets.BertStanceDataset(
             data_file = args[f'{data_key}_data'],
-            pd_read_kwargs = {},
+            pd_read_kwargs = {"engine": "python"},
             text_col = config["text_col"],
             topic_col = config["topic_col"],
             label_col = config["label_col"],
@@ -185,6 +185,105 @@ def train_AAD(model_handler, num_epochs, early_stopping_patience=0, verbose=True
         tst_data=tst_data,
         train_step_fn=model_handler.adapt_step,
     )
+
+
+def train_JointCL(model_handler, num_epochs, early_stopping_patience=0, verbose=True, vld_data=None, tst_data=None, train_step_fn=None):
+    '''
+    Trains the given model using the given data for the specified
+    number of epochs. Prints training loss and evaluation. Saves at
+    most 1 checkpoint plus a final one.
+    :param model_handler: a holder with a model and data to be trained.
+                            Assuming the model is a pytorch model.
+    :param num_epochs: the number of epochs to train the model for.
+    :param verbose: whether or not to print train results while training.
+                    Default (True): do print intermediate results.
+    '''
+    trn_scores_dict = {}
+    vld_scores_dict = {}
+    tst_scores_dict = {}
+    
+    best_vld_loss = float("inf")
+    last_vld_loss = float("inf")
+    greater_loss_epochs = 0
+
+    if train_step_fn is None:
+        train_step_fn = model_handler.train_step
+
+    for epoch in range(num_epochs):
+        train_step_fn()
+        # print training loss 
+        print("Total training loss: {}".format(model_handler.loss))
+
+        # print training (& vld) scores
+        if verbose:
+            # eval model on training data
+            # trn_scores, trn_loss = eval_helper(
+            #     model_handler,
+            #     data_name='TRAIN'
+            # )
+            # trn_scores_dict[epoch] = copy.deepcopy(trn_scores)
+            # print("Training loss: {}".format(trn_loss))
+
+            # update best model checkpoint
+            if vld_data is not None:
+                vld_scores, vld_loss = eval_helper(
+                    model_handler,
+                    data_name='VALIDATION',
+                    data=vld_data
+                )
+                vld_scores_dict[epoch] = copy.deepcopy(vld_scores)
+                # print vld loss
+                print("Avg Validation loss: {}".format(vld_loss))
+
+                #check if is best vld loss to save best model
+                if vld_loss < best_vld_loss:
+                    model_handler.save_best()
+
+                # check if the current vld loss is greater than the last loss and
+                # break the training loop if its over the early stopping patience
+                early_stopping_patience += vld_loss > last_vld_loss
+                if greater_loss_epochs > early_stopping_patience:
+                    break
+                
+                if model_handler.has_scheduler:
+                    model_handler.scheduler.step(vld_loss)
+            else:
+                model_handler.save_best()
+            
+            if tst_data is not None:
+                tst_scores, tst_loss = eval_helper(
+                    model_handler,
+                    data_name='TEST',
+                    data=tst_data
+                )
+                tst_scores_dict[epoch] = copy.deepcopy(tst_scores)
+                # print vld loss
+                print("Avg Test loss: {}".format(tst_loss))
+
+    print("TRAINED for {} epochs".format(epoch))
+
+    # save final checkpoint
+    model_handler.save(num="FINAL")
+
+    # print final training (& dev) scores
+    eval_helper(
+        model_handler,
+        data_name='TRAIN'
+    )
+    
+    if vld_data is not None:
+        eval_helper(
+            model_handler,
+            data_name='VALIDATION',
+            data=vld_data
+        )
+    
+    if tst_data is not None:
+        eval_helper(
+            model_handler,
+            data_name='TEST',
+            data=tst_data
+        )
 
 def save_predictions(model_handler, dev_data, dev_dataloader, out_name, config, is_test=False, is_valid=False):#, correct_preds=False):
     # trn_results = model_handler.predict()
@@ -795,6 +894,90 @@ def main(args):
             **kwargs
         )
 
+    elif 'JointCL' in config['name']:
+        pretrained_model_name=config.get("bert_pretrained_model", "bert-base-uncased")
+        layers=config.get("bert_layers", "-1")
+        layers_agg_type=config.get("bert_layers_agg", "concat")
+
+        batch_size = int(config['batch_size'])
+
+        device = torch.device('cuda' if use_cuda else 'cpu')
+        temperature = float(config.get("temperature", "0.07"))
+        dp = float(config.get("dp", "0.1"))
+        dropout = float(config.get("dropout", "0.1"))
+        gnn_dims = config.get("gnn_dims", "192,192")
+        att_heads = config.get("att_heads", "4,4")
+
+        cluster_times = int(config.get("cluster_times", "1"))
+        prototype_loss_weight = float(config.get("prototype_loss_weight", "0.2"))
+        stance_loss_weight = float(config.get("stance_loss_weight", "1.0"))
+
+        train_loader_prototype = torch.utils.data.DataLoader(
+            train_data,
+            batch_size=int(config['batch_size']),
+            shuffle=True,
+            drop_last=args["drop_last_batch"]
+        )
+
+        text_input_layer = input_models.BertLayer(
+            use_cuda=use_cuda,
+            pretrained_model_name=pretrained_model_name,
+            layers=layers,
+            layers_agg_type=layers_agg_type,
+        )
+        
+        stance_loss_fn = JointCL_loss.Stance_loss(temperature).to(device)
+        target_loss_fn = JointCL_loss.Stance_loss(temperature).to(device)
+        logits_loss_fn = JointCL_loss.TraditionCriterion(batch_size=batch_size, num_labels=nl)
+
+        model = models.JointCL(
+            att_heads=att_heads,
+            bert_dim=text_input_layer.dim,
+            bert_layer=text_input_layer,
+            dp=dp,
+            dropout=dropout,
+            gnn_dims=gnn_dims,
+            num_labels=nl,
+            use_cuda=use_cuda,
+        )
+
+        params2optimize = ([p for p in model.parameters()] + [p for p in target_loss_fn.parameters()])
+        opt = torch.optim.Adam(
+            params2optimize,
+            lr=lr
+        )
+        scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(
+            optimizer=opt,
+            patience=2,
+        )
+
+        kwargs = {
+            'model': model,
+            'text_input_model': text_input_layer,
+            'dataloader': trn_dataloader,
+            'name': config['name'] + args['name'],
+            'loss_function': None,
+            'optimizer': opt,
+            # 'scheduler': scheduler,
+            'is_joint_text_topic':config.get("is_joint"),
+            'bert_dim': text_input_layer.dim,
+            'cluster_times': cluster_times,
+            'device': device,
+            'logits_loss_fn': logits_loss_fn,
+            'prototype_loss_weight': prototype_loss_weight,
+            'stance_loss_fn': stance_loss_fn,
+            'stance_loss_weight': stance_loss_weight,
+            'target_loss_fn': target_loss_fn,
+            'temperature': temperature,
+            'train_loader_prototype': train_loader_prototype,
+        }
+
+        model_handler = model_utils.JointCLTorchModelHandler(
+            checkpoint_path=config.get('ckp_path', 'data/checkpoints/'),
+            use_cuda=use_cuda,
+            **kwargs
+        )
+
     if args["mode"] == 'train':
         # Train model
         start_time = time.time()
@@ -916,6 +1099,16 @@ if __name__ == "__main__":
 # train AAD (Simple Domain)
 # python train_model.py -m train -c ../../config/Bert_AAD_example.txt -t ../../data/ustancebr/v2/simple_domain/final_lu_train.csv -g ../../data/ustancebr/v2/simple_domain/final_bo_train.csv -v ../../data/ustancebr/v2/simple_domain/final_bo_valid.csv -p ../../data/ustancebr/v2/simple_domain/final_bo_test.csv -n bo -e 2 -s 1
 # python train_model.py -m train -c ../../config/Bert_AAD_example.txt -t ../../data/ustancebr/v2/teste_pqno/pqno_lu_train.csv -g ../../data/ustancebr/v2/teste_pqno/pqno_bo_train.csv -v ../../data/ustancebr/v2/teste_pqno/pqno_bo_train.csv -p ../../data/ustancebr/v2/teste_pqno/pqno_bo_test.csv -n bo -e 2 -s 1
+
+# train JointCL (ustancebr Simple Domain)
+# python train_model.py -m train -c ../../config/Bert_JointCL_example.txt -t ../../../data/ustancebr/v2/simple_domain/final_bo_train.csv -v ../../../data/ustancebr/v2/simple_domain/final_bo_valid.csv -p ../../../data/ustancebr/v2/simple_domain/final_bo_test.csv -n bo -e 2 -s 1
+# train JointCL (ustancebr Hold1TopicOut)
+# python train_model.py -m train -c ../../config/Bert_JointCL_example.txt -t ../../../data/ustancebr/v2/hold1topic_out/final_bo_train.csv -v ../../../data/ustancebr/v2/hold1topic_out/final_bo_valid.csv -p ../../../data/ustancebr/v2/hold1topic_out/final_bo_test.csv -n bo -e 2 -s 1
+
+# train JointCL (Semeval indomain)
+# python train_model.py -m train -c ../../config/Bert_JointCL_example_semeval.txt -t ../../../data/semeval/indomain/final_hc_train.csv -v ../../../data/semeval/indomain/final_hc_valid.csv -p ../../../data/semeval/indomain/final_dt_test.csv -n bo -e 2 -s 1
+# train JointCL (Semeval Hold1TopicOut)
+# python train_model.py -m train -c ../../config/Bert_JointCL_example_semeval.txt -t ../../../data/semeval/hold1topic_out/final_hc_train.csv -v ../../../data/semeval/hold1topic_out/final_hc_valid.csv -p ../../../data/semeval/hold1topic_out/final_dt_test.csv -n bo -e 2 -s 1
 
 
 ## VM

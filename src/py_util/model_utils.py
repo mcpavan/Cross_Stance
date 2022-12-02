@@ -159,7 +159,20 @@ class TorchModelHandler:
         :param name: the name of this score function, to be used in storing the scores.
         :param score_dict: the dictionary used to store the scores.
         '''
-        vals = score_fn(true_labels, (pred_labels>0.5)*1, average=None, labels=range(self.num_labels))
+        if self.num_labels < 3:
+            vals = score_fn(true_labels, (pred_labels>0.5)*1, average=None, labels=range(self.num_labels))
+        else:
+            if len(true_labels.shape) > 1 and true_labels.shape[-1] != 1:
+                true_labels_ = np.argmax(true_labels, axis=1)
+            else:
+                true_labels_ = true_labels.squeeze()
+            
+            if len(pred_labels.shape) > 1 and pred_labels.shape[-1] != 1:
+                pred_labels_ = np.argmax(pred_labels, axis=1)
+            else:
+                pred_labels_ = pred_labels.squeeze()
+            
+            vals = score_fn(true_labels_, pred_labels_, average=None, labels=range(self.num_labels))
         if name not in score_dict:
             score_dict[name] = {}
         
@@ -259,7 +272,7 @@ class TorchModelHandler:
         print("Evaluating on \"{}\" data".format(data_name))
         for metric_name, metric_dict in scores.items():
             for class_name, metric_val in metric_dict.items():
-                print(f"{metric_name}_{class_name}: {metric_val}", end="\t")
+                print(f"{metric_name}_{class_name}: {metric_val:.4f}", end="\t")
             print()
 
         return scores, loss
@@ -748,3 +761,273 @@ class AADTorchModelHandler(TorchModelHandler):
         avg_loss = partial_main_loss / batch_n #loss per batch
 
         return all_stance_pred, all_stance_labels, avg_loss
+
+
+import faiss
+gpu_id = 0
+
+class JointCLTorchModelHandler(TorchModelHandler):
+    def __init__(self, num_ckps=1, checkpoint_path='./data/checkpoints/', use_cuda=False, **params):
+
+        TorchModelHandler.__init__(
+            self,
+            num_ckps=num_ckps,
+            checkpoint_path=checkpoint_path,
+            use_cuda=use_cuda,
+            **params
+        )
+        
+        self.bert_dim = params["bert_dim"]
+        self.cluster_result = None
+        self.cluster_times = params["cluster_times"]
+        self.device = params["device"]
+        self.logits_loss_fn = params["logits_loss_fn"]
+        self.prototype_loss_weight = params["prototype_loss_weight"]
+        self.stance_loss_fn = params["stance_loss_fn"]
+        self.stance_loss_weight = params["stance_loss_weight"]
+        self.target_loss_fn = params["target_loss_fn"]
+        self.temperature = params["temperature"]
+        self.train_loader_prototype = params["train_loader_prototype"]
+
+    def compute_features(self, train_loader):
+        print('Computing features...')
+        self.model.eval()
+        features = torch.zeros(len(train_loader.dataset),self.bert_dim)
+        if self.use_cuda:
+            features = features.cuda()
+        
+        for batch in tqdm(train_loader):
+            
+            index = batch['index']
+            input_features = [
+                batch["text"]["input_ids"],
+                batch["text"]["is_topic_mask"],
+            ]
+
+            if self.use_cuda:
+                for k, inp_feat in enumerate(input_features):
+                    input_features[k] = inp_feat.to("cuda")
+            
+            with torch.no_grad():
+                feature = self.model.prototype_encode(input_features)
+                feature = feature.squeeze(dim=1)
+                features[index] = feature
+
+        return features.cpu()
+
+    def run_kmeans(self, x):
+        print('performing kmeans clustering')
+        results = {
+            'im2cluster': [],
+            'centroids': [],
+            'density': []
+        }
+
+        for seed, num_cluster in enumerate(self.num_cluster):
+            d = x.shape[1]
+            k = int(num_cluster)
+            clus = faiss.Clustering(d, k)
+            clus.verbose = True
+            clus.niter = 20
+            clus.nredo = 5
+            clus.seed = seed
+            clus.max_points_per_centroid = 1000
+            clus.min_points_per_centroid = 10
+
+            res = faiss.StandardGpuResources()
+            cfg = faiss.GpuIndexFlatConfig()
+            cfg.useFloat16 = False
+            cfg.device = gpu_id
+            index = faiss.GpuIndexFlatL2(res, d, cfg)
+
+            clus.train(x, index)
+
+            D, I = index.search(x, 1) # for each sample, find cluster distance and assignments
+            im2cluster = [int(n[0]) for n in I]
+
+            # get cluster centroids
+            centroids = faiss.vector_to_array(clus.centroids).reshape(k,d)
+
+            # sample-to-centroid distances for each cluster
+            Dcluster = [[] for c in range(k)]
+            for im,i in enumerate(im2cluster):
+                Dcluster[i].append(D[im][0])
+
+            # concentration estimation (phi)
+            density = np.zeros(k)
+            for i,dist in enumerate(Dcluster):
+                if len(dist)>1:
+                    d = (np.asarray(dist)**0.5).mean()/np.log(len(dist)+10)
+                    density[i] = d
+                    
+                    #if cluster only has one point, use the max to estimate its concentration
+
+            dmax = density.max()
+            for i,dist in enumerate(Dcluster):
+                if len(dist)<=1:
+                    density[i] = dmax
+
+            density = density.clip(np.percentile(density,10),np.percentile(density,90)) #clamp extreme values for stability
+            density = self.temperature*density/density.mean()  #scale the mean to temperature
+
+            # convert to cuda Tensors for broadcast
+            centroids = torch.Tensor(centroids).cuda()
+            centroids = torch.nn.functional.normalize(centroids, p=2, dim=1)
+
+            im2cluster = torch.LongTensor(im2cluster).cuda()
+            density = torch.Tensor(density).cuda()
+
+            results['centroids'].append(centroids)
+            results['density'].append(density)
+            results['im2cluster'].append(im2cluster)
+
+        return results
+
+    def run_prototype(self,train_loader):
+        self.warmup_epoch = 0
+        self.num_cluster = [5]
+
+        features = self.compute_features(train_loader)
+
+        cluster_result = {
+            'im2cluster': [],
+            'centroids': [],
+            'density': [],
+        }
+
+        for num_cluster in self.num_cluster:
+            if self.use_cuda:
+                cluster_result['im2cluster'].append(torch.zeros(len(train_loader.dataset),dtype=torch.long).cuda())
+                cluster_result['centroids'].append(torch.zeros(int(num_cluster),self.bert_dim).cuda())
+                cluster_result['density'].append(torch.zeros(int(num_cluster)).cuda())
+            else:
+                cluster_result['im2cluster'].append(torch.zeros(len(train_loader.dataset),dtype=torch.long))
+                cluster_result['centroids'].append(torch.zeros(int(num_cluster),self.bert_dim))
+                cluster_result['density'].append(torch.zeros(int(num_cluster)))
+        features = features.numpy()
+        cluster_result = self.run_kmeans(features)
+
+        return cluster_result
+
+    def train_step(self):
+        '''
+        Runs one epoch of training on this model.
+        '''
+        print(f"[{self.name}] epoch {self.epoch}")
+        self.model.train()
+        
+        self.loss = 0
+        start_time = time.time()
+
+        for batch_n, batch_data in tqdm(enumerate(self.dataloader)):
+
+            if batch_n % int(len(self.dataloader)/self.cluster_times) == 0:
+                cluster_result = self.run_prototype(self.train_loader_prototype)
+
+            label_tensor = torch.stack(batch_data["label"]).T.type(torch.FloatTensor)
+            if len(label_tensor.shape) > 1 and label_tensor.shape[-1] != 1:
+                label_tensor = label_tensor.argmax(dim=1).reshape(-1,1)
+            label_tensor = label_tensor.squeeze()
+            
+            topic_tensor = torch.stack(batch_data["topic_label"]).T.type(torch.FloatTensor)
+            if len(topic_tensor.shape) > 1 and topic_tensor.shape[-1] != 1:
+                topic_tensor = topic_tensor.argmax(dim=1).reshape(-1,1)
+            topic_tensor = topic_tensor.squeeze()
+            
+            stance_topic_tensor = label_tensor + (self.model.num_labels * topic_tensor)
+
+            # index = batch_data["index"]
+            input_features = [
+                batch_data["text"]["input_ids"],
+                batch_data["text"]["is_topic_mask"],
+            ]
+
+            self.model.zero_grad()
+
+            if self.use_cuda:
+                label_tensor = label_tensor.to("cuda")
+                topic_tensor = topic_tensor.to("cuda")
+
+                for k, inp_feat in enumerate(input_features):
+                    input_features[k] = inp_feat.to("cuda")
+            
+            feature = self.model.prototype_encode(input_features)
+            
+            logits, node_for_con = self.model(input_features+[cluster_result['centroids']])
+            self.cluster_result = [cluster_result['centroids']]
+
+            if cluster_result is not None:
+
+                for n, im2cluster in enumerate(cluster_result['im2cluster']):
+                    # pos_proto_id = im2cluster[index]
+
+                    # prototype_loss = self.target_loss_fn(node_for_con, label_tensor, topic_tensor, pos_proto_id)
+                    prototype_loss = self.target_loss_fn(node_for_con, stance_topic_tensor)
+                    stance_loss = self.stance_loss_fn(feature, label_tensor)
+            else:
+                prototype_loss = 0.0
+
+            logits_loss = self.logits_loss_fn(logits.squeeze(), label_tensor)
+
+            graph_loss = logits_loss + stance_loss * self.stance_loss_weight + prototype_loss * self.prototype_loss_weight
+            # print(f"Train step: graph_loss: {graph_loss:.5}  logit_loss:{logits_loss:.5}, stance loss: {stance_loss:.5}, prototype loss: {prototype_loss:.5} ")
+            # print("logits",logits)
+            graph_loss.backward()
+            self.optimizer.step()
+            self.optimizer.zero_grad()
+
+            self.loss += graph_loss.item()
+        total_time = (time.time() - start_time)/60
+        print(f"    took: {total_time:.2f} min")
+
+        self.epoch += 1
+    
+    def predict(self, data=None):
+        self.model.eval()
+        
+        partial_loss = 0
+        all_y_pred = torch.tensor([], device="cpu")
+        all_labels = torch.tensor([], device="cpu")
+        
+        if data is None:
+            data = self.dataloader
+        
+        for batch_n, batch_data in tqdm(enumerate(data)):
+            with torch.no_grad():
+                label_tensor = torch.stack(batch_data["label"]).T.type(torch.FloatTensor)
+                if len(label_tensor.shape) > 1 and label_tensor.shape[-1] != 1:
+                    label_tensor = label_tensor.argmax(dim=1).reshape(-1,1)
+                label_tensor = label_tensor.squeeze()
+                
+                input_features = [
+                    batch_data["text"]["input_ids"],
+                    batch_data["text"]["is_topic_mask"],
+                ]
+
+                all_labels = torch.cat((all_labels, label_tensor))
+                if self.use_cuda:
+                    label_tensor = label_tensor.to("cuda")
+                    
+                    for k, inp_feat in enumerate(input_features):
+                        input_features[k] = inp_feat.to("cuda")
+
+                y_pred, _ = self.model(input_features+self.cluster_result)
+                graph_loss = self.logits_loss_fn(y_pred.squeeze(), label_tensor)
+
+                # if self.use_cuda:
+                all_y_pred = torch.cat((all_y_pred, y_pred.cpu()))
+                
+                partial_loss += graph_loss.item()
+
+        avg_loss = partial_loss / batch_n #loss per batch
+        print("0.0 - 0.1", (all_y_pred.numpy() <= 0.1).sum(axis=0))
+        print("0.1 - 0.2", ((all_y_pred.numpy() > 0.1) * (all_y_pred.numpy()<= 0.2)).sum(axis=0))
+        print("0.2 - 0.3", ((all_y_pred.numpy() > 0.2) * (all_y_pred.numpy()<= 0.3)).sum(axis=0))
+        print("0.3 - 0.4", ((all_y_pred.numpy() > 0.3) * (all_y_pred.numpy()<= 0.4)).sum(axis=0))
+        print("0.4 - 0.5", ((all_y_pred.numpy() > 0.4) * (all_y_pred.numpy()<= 0.5)).sum(axis=0))
+        print("0.5 - 0.6", ((all_y_pred.numpy() > 0.5) * (all_y_pred.numpy()<= 0.6)).sum(axis=0))
+        print("0.6 - 0.7", ((all_y_pred.numpy() > 0.6) * (all_y_pred.numpy()<= 0.7)).sum(axis=0))
+        print("0.7 - 0.8", ((all_y_pred.numpy() > 0.7) * (all_y_pred.numpy()<= 0.8)).sum(axis=0))
+        print("0.8 - 0.9", ((all_y_pred.numpy() > 0.8) * (all_y_pred.numpy()<= 0.9)).sum(axis=0))
+        print("0.9 - 1.0", (all_y_pred.numpy() > 0.9).sum(axis=0))
+        return all_y_pred.numpy(), all_labels.numpy(), avg_loss#partial_loss

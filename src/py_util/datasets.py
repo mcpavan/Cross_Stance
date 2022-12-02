@@ -1,5 +1,7 @@
+import numpy as np
 import pandas as pd
 import time
+import torch
 
 from collections import Counter
 from torch.utils.data import Dataset
@@ -21,7 +23,8 @@ class BertStanceDataset(Dataset):
         :param pad_value: value to pad the sequences. Default=0
         :param add_special_tokens: Whether to add the special tokens to the sequences. Default=True
         :param bert_pretrained_model: name of the pretrained BERT Model. Default='bert-base-uncased'
-        :param is_joint: whether to encode the topic and text jointly. Default=False
+        :param is_joint: whether to encode the topic and text jointly. Default=False`
+        :param topic_first: whether to encode the topic first or after the text when is_joint=True. Ignored if is_joint=False. Default=True
         :param sample_weights: whether to generate sample weights to balance the
                dataset considering both topics and label. Default=False
         """
@@ -49,6 +52,7 @@ class BertStanceDataset(Dataset):
 
         self.bert_pretrained_model = kwargs.get("bert_pretrained_model", "bert-base-uncased")
         self.is_joint = bool(int(kwargs.get("is_joint", "0")))
+        self.topic_first = bool(int(kwargs.get("topic_first", "1")))
         self.sample_weights = bool(int(kwargs.get("sample_weights", "0")))
         self.weight_dict = (1/self.df[[self.topic_col, self.label_col]].value_counts(normalize=True)).to_dict()
     
@@ -57,6 +61,8 @@ class BertStanceDataset(Dataset):
         self.df["text_token_type_ids"] = [[] for _ in range(len(self.df))]
         self.df["text_mask"] = [[] for _ in range(len(self.df))]
         self.df["text_len"] = 0
+        if self.is_joint:
+            self.df["is_topic_mask"] = [[] for _ in range(len(self.df))]
         
         # self.df["bert_token_topic"] = [[] for _ in range(len(self.df))]
         self.df["topic_ids"] = [[] for _ in range(len(self.df))]
@@ -78,20 +84,42 @@ class BertStanceDataset(Dataset):
             self.df.at[idx, "weight"] = self.weight_dict[tuple(self.df.loc[idx, [self.topic_col, self.label_col]])]
 
             if self.is_joint:
+                text = self.df.loc[idx, self.text_col]
+                topic = self.df.loc[idx, self.topic_col]
+
+                text_indices = self.tokenizer(text)
+                topic_indices = self.tokenizer(topic, max_length=4)
+                topic_len = np.sum(topic_indices != 0)
+                text_len = np.sum(text_indices != 0)
+
+                if self.topic_first:
+                    first_sentence = topic
+                    second_sentence = text
+                    is_topic_mask = [1] * (topic_len + 2) + [1] * (text_len + 1)
+                    is_topic_mask = pad_and_truncate(is_topic_mask, self.max_seq_len_text)
+                else:
+                    first_sentence = text
+                    second_sentence = topic
+                    is_topic_mask = [0] * (text_len + 2) + [1] * (topic_len + 1)
+                    is_topic_mask = pad_and_truncate(is_topic_mask, self.max_seq_len_text)
+
                 enc_out = self.tokenizer(
-                    self.df.loc[idx, self.topic_col],
-                    text_pair = self.df.loc[idx, self.text_col],
+                    first_sentence,
+                    text_pair = second_sentence,
                     add_special_tokens = self.add_special_tokens,
                     max_length = self.max_seq_len_text,
                     pad_to_max_length = True,
                     truncation=True,
                     return_tensors="pt"
                 )
+
+
                 # self.df.loc[idx, "bert_token_text"] = enc_out
                 self.df.at[idx, "text_ids"] = enc_out["input_ids"][0]
                 self.df.at[idx, "text_token_type_ids"] = enc_out["token_type_ids"][0]
                 self.df.at[idx, "text_mask"] = enc_out["attention_mask"][0]
                 self.df.at[idx, "text_len"] = enc_out["attention_mask"][0].sum()
+                self.df.at[idx, "is_topic_mask"] = torch.from_numpy(is_topic_mask)
             else:
                 enc_text = self.tokenizer(
                     self.df.loc[idx, self.text_col],
@@ -143,10 +171,11 @@ class BertStanceDataset(Dataset):
             "text_len",
         ]
 
-        text_item = self.df.loc[index, text_cols] \
-                        .rename({txt_:default_ for txt_, default_ in zip(text_cols, default_col_names)}) \
-                        .to_dict()
         if not self.is_joint:
+            text_item = self.df.loc[index, text_cols] \
+                            .rename({txt_:default_ for txt_, default_ in zip(text_cols, default_col_names)}) \
+                            .to_dict()
+
             topic_cols = [
                 "topic_ids",
                 "topic_token_type_ids",
@@ -161,13 +190,22 @@ class BertStanceDataset(Dataset):
                 "topic": topic_item,
                 "label": self.df.loc[index, "vec_target"],
                 "topic_label": self.df.loc[index, "vec_topic"],
+                "index": index,
             }
         else:
+            text_cols += ["is_topic_mask"]
+            default_col_names += ["is_topic_mask"]
+            text_item = self.df.loc[index, text_cols] \
+                            .rename({txt_:default_ for txt_, default_ in zip(text_cols, default_col_names)}) \
+                            .to_dict()
+            
             return_dict = {
                 "text": text_item,
                 "label": self.df.loc[index, "vec_target"],
                 "topic_label": self.df.loc[index, "vec_topic"],
+                "index": index,
             }
+        
         if self.sample_weights:
             return_dict["sample_weight"] = self.df.loc[index, "weight"]
 
@@ -228,3 +266,16 @@ def create_tgt_lookup_tables(targets):
             tgt2vec[wrd]=tuple(vec)
 
     return tgt2vec, vec2tgt, tgt_cnt
+
+def pad_and_truncate(sequence, maxlen, dtype='int64', padding='post', truncating='post', value=0):
+    x = (np.ones(maxlen) * value).astype(dtype)
+    if truncating == 'pre':
+        trunc = sequence[-maxlen:]
+    else:
+        trunc = sequence[:maxlen]
+    trunc = np.asarray(trunc, dtype=dtype)
+    if padding == 'post':
+        x[:len(trunc)] = trunc
+    else:
+        x[-len(trunc):] = trunc
+    return x
