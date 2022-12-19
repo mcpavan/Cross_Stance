@@ -1106,9 +1106,9 @@ if __name__ == "__main__":
 # python train_model.py -m train -c ../../config/Bert_JointCL_example.txt -t ../../../data/ustancebr/v2/hold1topic_out/final_bo_train.csv -v ../../../data/ustancebr/v2/hold1topic_out/final_bo_valid.csv -p ../../../data/ustancebr/v2/hold1topic_out/final_bo_test.csv -n bo -e 2 -s 1
 
 # train JointCL (Semeval indomain)
-# python train_model.py -m train -c ../../config/Bert_JointCL_example_semeval.txt -t ../../../data/semeval/indomain/final_hc_train.csv -v ../../../data/semeval/indomain/final_hc_valid.csv -p ../../../data/semeval/indomain/final_dt_test.csv -n bo -e 2 -s 1
+# python train_model.py -m train -c ../../config/Bert_JointCL_example_semeval.txt -t ../../../data/semeval/indomain/final_dt_train.csv -v ../../../data/semeval/indomain/final_dt_valid.csv -p ../../../data/semeval/indomain/final_dt_test.csv -n bo -e 2 -s 1
 # train JointCL (Semeval Hold1TopicOut)
-# python train_model.py -m train -c ../../config/Bert_JointCL_example_semeval.txt -t ../../../data/semeval/hold1topic_out/final_hc_train.csv -v ../../../data/semeval/hold1topic_out/final_hc_valid.csv -p ../../../data/semeval/hold1topic_out/final_dt_test.csv -n bo -e 2 -s 1
+# python train_model.py -m train -c ../../config/Bert_JointCL_example_semeval.txt -t ../../../data/semeval/hold1topic_out/final_dt_train.csv -v ../../../data/semeval/hold1topic_out/final_dt_valid.csv -p ../../../data/semeval/hold1topic_out/final_dt_test.csv -n bo -e 2 -s 1
 
 
 ## VM

@@ -12,6 +12,7 @@ Cross-Target stance detection
 - scikit-learn==0.24.2
 - pytorch==1.9.0 (Cuda 10.2)
 - transformers==4.7.0
+- faiss-gpu==1.7.1 (conda install -c conda-forge faiss-gpu==1.7.1)
 
 # Training a model:
 
