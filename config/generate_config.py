@@ -4,7 +4,7 @@ import os
 first_v_config = 101
 folder = "hold1topic_out" # "simple_domain" or "hold1topic_out"
 # model_name_out_file = "BertBiLSTMAttn" # BertBiLSTMAttn or BertBiLSTMJointAttn
-batch_size = 32
+# batch_size = 32
 modelname2example = {
     "BertAAD": "./Bert_AAD_example.txt",
     "BiCondBertLstm": "./Bert_BiCondLstm_example.txt",
@@ -27,11 +27,9 @@ values_dict = {
             "-4,-3,-2,-1",
         ],
         "learning_rate": [
-            2e-5,
-    	    1e-7,
+            1e-7,
         ],
         "discriminator_learning_rate": [
-            1e-5,
             1e-7,
         ],
         "discriminator_dim": [
@@ -58,7 +56,6 @@ values_dict = {
             "128",
         ],
         "learning_rate": [
-            1e-4,
             1e-7,
         ]
     },
@@ -136,9 +133,11 @@ values_dict = {
             "200",
         ],
         "learning_rate": [
-            1e-4,
             1e-7,
-        ]
+        ],
+        "batch_size": [
+            64
+        ],
     },
     "BertJointCL": {
         "bert_pretrained_model": [
@@ -150,17 +149,22 @@ values_dict = {
             "-4,-3,-2,-1",
         ],
         "gnn_dims": [
+            # "128,128",
             "64,64",
             "192,192",
         ],
         "att_heads": [
+            # "24,24",
+            "12,12",
+            # "16,16",
             "4,4",
-            "16,16",
         ],
         "learning_rate": [
-            1e-4,
             1e-7,
-        ]
+        ],
+        "batch_size": [
+            64
+        ],
     },
     "BertTOAD": {
         "bert_pretrained_model": [
@@ -173,7 +177,7 @@ values_dict = {
         ],
         "lstm_layers": [
             "1",
-            "2",
+            # "2",
         ],
         "lstm_hidden_dim": [
             "16",
@@ -188,9 +192,11 @@ values_dict = {
             16,
         ],
         "learning_rate": [
-            1e-4,
             1e-7,
-        ]
+        ],
+        "batch_size": [
+            64
+        ],
     },
 }
 
@@ -210,7 +216,17 @@ for model_name_out_file, example_file in modelname2example.items():
 
     base_config_dict = load_config_file(example_file)
 
-    for k, combination in enumerate(product(*list(values_dict[model_name_out_file].values())), start=first_v_config):
+    k = first_v_config
+    for combination in product(*list(values_dict[model_name_out_file].values())):
+
+        if model_name_out_file == "BertJointCL":
+            comb_dict = {}
+            for key, value in zip(values_dict[model_name_out_file].keys(), combination):
+                comb_dict[key] = value
+
+            if int(comb_dict["gnn_dims"].split(",")[0]) * int(comb_dict["att_heads"].split(",")[0]) != 768:#len(comb_dict["bert_layers"].split(","))*768:
+                continue
+        
         new_config_dict = base_config_dict
 
         for key, value in zip(values_dict[model_name_out_file].keys(), combination):
@@ -230,4 +246,6 @@ for model_name_out_file, example_file in modelname2example.items():
         with open(current_out_path, "w") as f_:
             new_config_str = "\n".join(f"{k}:{v}" for k, v in new_config_dict.items())
             print(new_config_str, end="", file=f_, flush=True)
+        
+        k += 1
     

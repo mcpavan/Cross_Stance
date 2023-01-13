@@ -23,7 +23,7 @@ def load_data(config, args, data_key="trn"):
     if 'bert' in config or 'bert' in config['name']:
         data = datasets.BertStanceDataset(
             data_file = args[f'{data_key}_data'],
-            pd_read_kwargs = {"engine": "python"},
+            pd_read_kwargs = {},#"engine": "python"},
             text_col = config["text_col"],
             topic_col = config["topic_col"],
             label_col = config["label_col"],

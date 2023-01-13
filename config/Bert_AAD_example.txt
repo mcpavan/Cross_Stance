@@ -4,6 +4,7 @@ bert_pretrained_model:neuralmind/bert-base-portuguese-cased
 bert_layers:-4,-3,-2,-1
 bert_layers_agg:concat
 dropout:0.35
+drop_last_batch:True
 text_col:Text
 topic_col:Target
 label_col:Polarity
