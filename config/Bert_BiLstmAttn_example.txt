@@ -21,4 +21,4 @@ batch_size:32
 learning_rate:0.001
 n_output_classes:2
 ckp_path:../../checkpoints/ustancebr/V0/
-epochs:50
+epochs:10

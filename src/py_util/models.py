@@ -91,13 +91,11 @@ class BiCondLSTMModel(torch.nn.Module):
         text_embeddings = text_embeddings.transpose(0, 1) # (T, B, E)
         topic_embeddings = topic_embeddings.transpose(0, 1) # (C, B, E)
 
-        _, combo_fb_hm, _, _ = self.bilstm(text_embeddings, topic_embeddings, text_length, topic_length)
+        _, combo_fb_hm, _, _ = self.bilstm(text_embeddings, topic_embeddings, text_length, topic_length) # (dir*Hidden*N_layers, B)
 
         #dropout
-        combo_fb_hm = self.dropout(combo_fb_hm) # (B, H*N, dir * N_layers)
-
+        combo_fb_hm = self.dropout(combo_fb_hm) # (B, dir*Hidden*N_layers)
         y_pred = self.pred_layer(combo_fb_hm) # (B, 2)
-
         return y_pred
 
 class BiLSTMJointAttentionModel(torch.nn.Module):

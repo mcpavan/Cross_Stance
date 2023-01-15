@@ -123,7 +123,7 @@ class BiCondLSTMLayer(torch.nn.Module):
 
         #feed text conditioned on topic
         output, (txt_last_hn, _) = self.text_lstm(p_text_embeds, last_top_hn_cn) # (2, B, H)
-        txt_fw_bw_hn = txt_last_hn.transpose(0, 1).reshape((-1, 2 * self.hidden_dim))
+        txt_fw_bw_hn = txt_last_hn.transpose(0, 1).reshape((-1, 2 * self.hidden_dim * self.num_layers))
         padded_output, _ = rnn.pad_packed_sequence(output, total_length=txt_e.shape[0])
         
         return padded_output, txt_fw_bw_hn, last_top_hn, padded_topic_output
