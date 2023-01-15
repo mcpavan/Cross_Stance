@@ -43,7 +43,7 @@ class BertLayer(torch.nn.Module):
             self.n_layers = self.bert_layer.config.num_hidden_layers
         else:
             self.n_layers = len(self.layers.split(","))
-        self.dim = 768 * self.n_layers
+        self.dim = self.bert_layer.config.hidden_size * self.n_layers
 
         if self.use_cuda:
             self.bert_layer.to("cuda")

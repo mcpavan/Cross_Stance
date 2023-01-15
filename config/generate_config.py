@@ -145,25 +145,24 @@ values_dict = {
             "pablocosta/bertabaporu-base-uncased",
         ],
         "bert_layers": [
-            # "-1",
-            "-4,-3,-2,-1",
+            "-1", # only 1 layer allowed
+            # "-4,-3,-2,-1",
         ],
         "gnn_dims": [
-            # "128,128",
             "64,64",
+            # "128,128",
             "192,192",
         ],
         "att_heads": [
-            # "24,24",
             "12,12",
-            # "16,16",
+            # "6,6",
             "4,4",
         ],
         "learning_rate": [
             1e-7,
         ],
         "batch_size": [
-            64
+            32
         ],
     },
     "BertTOAD": {
@@ -195,7 +194,7 @@ values_dict = {
             1e-7,
         ],
         "batch_size": [
-            64
+            32
         ],
     },
 }
@@ -224,7 +223,11 @@ for model_name_out_file, example_file in modelname2example.items():
             for key, value in zip(values_dict[model_name_out_file].keys(), combination):
                 comb_dict[key] = value
 
-            if int(comb_dict["gnn_dims"].split(",")[0]) * int(comb_dict["att_heads"].split(",")[0]) != 768:#len(comb_dict["bert_layers"].split(","))*768:
+            bert_out_dim = 768 # it comes from the pooler output not from the layer hidden states
+            gnn_dim = int(comb_dict["gnn_dims"].split(",")[0])
+            att_heads = int(comb_dict["att_heads"].split(",")[0])
+
+            if gnn_dim * att_heads != bert_out_dim:
                 continue
         
         new_config_dict = base_config_dict
