@@ -601,7 +601,7 @@ class AADTorchModelHandler(TorchModelHandler):
         data_iter = tqdm(enumerate(zip(self.dataloader, self.tgt_dataloader)))
         for batch_n, (src_batch_data, tgt_batch_data) in data_iter:
             # make sure only equal size batches are used from both source and target domain
-            if len(src_batch_data["label"]) != len(tgt_batch_data["label"]):
+            if len(src_batch_data["label"][0]) != len(tgt_batch_data["label"][0]):
                 continue
 
             # def get_label_tensor(x, use_cuda):

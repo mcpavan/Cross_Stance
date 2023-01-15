@@ -124,7 +124,7 @@ def train(model_handler, num_epochs, early_stopping_patience=0, verbose=True, vl
                 # print vld loss
                 print("Avg Test loss: {}".format(tst_loss))
 
-    print("TRAINED for {} epochs".format(epoch))
+    print("TRAINED for {} epochs".format(epoch+1))
 
     # save final checkpoint
     model_handler.save(num="FINAL")
@@ -260,7 +260,7 @@ def train_JointCL(model_handler, num_epochs, early_stopping_patience=0, verbose=
                 # print vld loss
                 print("Avg Test loss: {}".format(tst_loss))
 
-    print("TRAINED for {} epochs".format(epoch))
+    print("TRAINED for {} epochs".format(epoch+1))
 
     # save final checkpoint
     model_handler.save(num="FINAL")
