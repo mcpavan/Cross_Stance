@@ -1,17 +1,17 @@
 
 config_version_map = [
-    ("BertAAD", 101, 102),
+    # ("BertAAD", 101, 102),
     # ("BiCondBertLstm", 101, 104),
     # ("BertBiLSTMAttn", 101, 116),
     # ("BertBiLSTMJointAttn", 101, 116),
-    # ("BertCrossNet", 101, 108),
+    ("BertCrossNet", 101, 108),
     # ("BertJointCL", 101, 102),
     # ("BertTOAD", 101, 108),
 ]
 
 # config_file_name = "Bert_BiLSTMAttn"
 data_folder = "hold1topic_out" #"hold1topic_out" or "simple_domain"
-out_path = "./sh_auto_train_aad.sh"
+out_path = "./sh_auto_train_crossnet.sh"
 
 with open(out_path, "w") as f_:
     print("", end="", file=f_)

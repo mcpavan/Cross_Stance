@@ -1095,6 +1095,7 @@ if __name__ == "__main__":
 
 # train TOAD (Hold1TopicOut)
 # python train_model.py -m train -c ../../config/Bert_TOAD_example.txt -t ../../../data/ustancebr/v2/hold1topic_out/final_bo_train.csv -v ../../../data/ustancebr/v2/hold1topic_out/final_bo_valid.csv -p ../../../data/ustancebr/v2/hold1topic_out/final_bo_test.csv -n bo -e 2 -s 1
+# python train_model.py -m train -c ../../config/Bert_TOAD_example.txt -t ../../data/ustancebr/v2/teste_pqno_h1to/pqno_bo_train.csv -v ../../data/ustancebr/v2/teste_pqno_h1to/pqno_bo_test.csv -p ../../data/ustancebr/v2/teste_pqno_h1to/pqno_bo_test.csv -n bo -e 2
 
 # train AAD (Simple Domain)
 # python train_model.py -m train -c ../../config/Bert_AAD_example.txt -t ../../data/ustancebr/v2/simple_domain/final_lu_train.csv -g ../../data/ustancebr/v2/simple_domain/final_bo_train.csv -v ../../data/ustancebr/v2/simple_domain/final_bo_valid.csv -p ../../data/ustancebr/v2/simple_domain/final_bo_test.csv -n bo -e 2 -s 1
@@ -1104,6 +1105,8 @@ if __name__ == "__main__":
 # python train_model.py -m train -c ../../config/Bert_JointCL_example.txt -t ../../../data/ustancebr/v2/simple_domain/final_bo_train.csv -v ../../../data/ustancebr/v2/simple_domain/final_bo_valid.csv -p ../../../data/ustancebr/v2/simple_domain/final_bo_test.csv -n bo -e 2 -s 1
 # train JointCL (ustancebr Hold1TopicOut)
 # python train_model.py -m train -c ../../config/Bert_JointCL_example.txt -t ../../../data/ustancebr/v2/hold1topic_out/final_bo_train.csv -v ../../../data/ustancebr/v2/hold1topic_out/final_bo_valid.csv -p ../../../data/ustancebr/v2/hold1topic_out/final_bo_test.csv -n bo -e 2 -s 1
+# train JointCL (ustancebr PQNO Hold1TopicOut)
+# python train_model.py -m train -c ../../config/Bert_JointCL_example.txt -t ../../data/ustancebr/v2/teste_pqno_h1to/pqno_bo_train.csv -v ../../data/ustancebr/v2/teste_pqno_h1to/pqno_bo_valid.csv -p ../../data/ustancebr/v2/teste_pqno_h1to/pqno_bo_test.csv -n bo -e 2
 
 # train JointCL (Semeval indomain)
 # python train_model.py -m train -c ../../config/Bert_JointCL_example_semeval.txt -t ../../../data/semeval/indomain/final_dt_train.csv -v ../../../data/semeval/indomain/final_dt_valid.csv -p ../../../data/semeval/indomain/final_dt_test.csv -n bo -e 2 -s 1

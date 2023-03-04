@@ -283,7 +283,7 @@ class CrossNet(torch.nn.Module):
 
         self.dropout = nn.Dropout(p=drop_prob) #dropout on last layer
         self.pred_layer = ml.PredictionLayer(
-            input_dim = 2 * num_layers * self.hidden_dim,
+            input_dim = 2 * self.hidden_dim,#2 * num_layers * self.hidden_dim,
             output_dim = self.output_dim,
             use_cuda=use_cuda
         )

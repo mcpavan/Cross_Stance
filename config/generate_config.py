@@ -135,9 +135,9 @@ values_dict = {
         "learning_rate": [
             1e-7,
         ],
-        "batch_size": [
-            64
-        ],
+        # "batch_size": [
+        #     64
+        # ],
     },
     "BertJointCL": {
         "bert_pretrained_model": [

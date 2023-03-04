@@ -968,7 +968,11 @@ class JointCLTorchModelHandler(TorchModelHandler):
                 prototype_loss = 0.0
 
             logits_loss = self.logits_loss_fn(logits.squeeze(), label_tensor)
-
+            
+            # print("*"*20)
+            # print("logits_loss", logits_loss)
+            # print("stance_loss", stance_loss, stance_loss * self.stance_loss_weight)
+            # print("prototype_loss", prototype_loss, prototype_loss * self.prototype_loss_weight)
             graph_loss = logits_loss + stance_loss * self.stance_loss_weight + prototype_loss * self.prototype_loss_weight
             # print(f"Train step: graph_loss: {graph_loss:.5}  logit_loss:{logits_loss:.5}, stance loss: {stance_loss:.5}, prototype loss: {prototype_loss:.5} ")
             # print("logits",logits)
@@ -997,7 +1001,7 @@ class JointCLTorchModelHandler(TorchModelHandler):
                 label_tensor = torch.stack(batch_data["label"]).T.type(torch.FloatTensor)
                 if len(label_tensor.shape) > 1 and label_tensor.shape[-1] != 1:
                     label_tensor = label_tensor.argmax(dim=1).reshape(-1,1)
-                label_tensor = label_tensor.squeeze()
+                label_tensor = label_tensor.squeeze(-1)
                 
                 input_features = [
                     batch_data["text"]["input_ids"],
@@ -1012,7 +1016,7 @@ class JointCLTorchModelHandler(TorchModelHandler):
                         input_features[k] = inp_feat.to("cuda")
 
                 y_pred, _ = self.model(input_features+self.cluster_result)
-                graph_loss = self.logits_loss_fn(y_pred.squeeze(), label_tensor)
+                graph_loss = self.logits_loss_fn(y_pred.squeeze(-1), label_tensor)
 
                 # if self.use_cuda:
                 all_y_pred = torch.cat((all_y_pred, y_pred.cpu()))
