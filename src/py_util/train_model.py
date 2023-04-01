@@ -19,7 +19,7 @@ def load_config_file(config_file_path):
     
     return config
 
-def load_data(config, args, data_key="trn"):
+def load_data(config, args, data_key="trn", proto=False):
     if 'bert' in config or 'bert' in config['name']:
         data = datasets.BertStanceDataset(
             data_file = args[f'{data_key}_data'],
@@ -34,6 +34,8 @@ def load_data(config, args, data_key="trn"):
             bert_pretrained_model = config.get("bert_pretrained_model"),
             is_joint = config.get("is_joint"),
             sample_weights = config.get("sample_weights"),
+            data_sample = float(args.get("train_data_sample", 1.0)) if data_key == "trn" and proto==True else 1,
+            random_state = float(args.get("random_state", 123)),
         )
     else:
         #TODO: Create dataset for non-BERT models
@@ -907,16 +909,19 @@ def main(args):
         dropout = float(config.get("dropout", "0.1"))
         gnn_dims = config.get("gnn_dims", "192,192")
         att_heads = config.get("att_heads", "4,4")
+        alpha = config.get("alpha", "0.8")
+        beta = config.get("beta", "1.2")
 
         cluster_times = int(config.get("cluster_times", "1"))
         prototype_loss_weight = float(config.get("prototype_loss_weight", "0.2"))
         stance_loss_weight = float(config.get("stance_loss_weight", "1.0"))
 
+        train_proto_data = load_data(config, args, data_key="trn", proto=True)
         train_loader_prototype = torch.utils.data.DataLoader(
-            train_data,
+            train_proto_data,
             batch_size=int(config['batch_size']),
             shuffle=True,
-            drop_last=args["drop_last_batch"]
+            drop_last=args["drop_last_batch"],
         )
 
         text_input_layer = input_models.BertLayer(
@@ -1061,6 +1066,8 @@ if __name__ == "__main__":
     parser.add_argument('-f', '--saved_model_file_name', dest="saved_model_file_name", required=False, default=None)
     parser.add_argument('-o', '--out_path', dest="out_path", help='Ouput file name', default='./pred')
     parser.add_argument('-d', '--drop_last_batch', type=bool, dest="drop_last_batch", help="Whether to drop the last batch or not", default=False)
+    parser.add_argument('-a', '--train_data_sample', type=float, dest="train_data_sample", help="Value to sample the train data.", default=1.0)
+    parser.add_argument('-r', '--random_state', type=int, dest="train_data_sample", help="Random state seed to sample the train data.", default=123)
     args = vars(parser.parse_args())
 
     main(args)

@@ -37,6 +37,30 @@ class BertStanceDataset(Dataset):
         self.text_col = kwargs["text_col"]
         self.topic_col = kwargs["topic_col"]
         self.label_col = kwargs["label_col"]
+
+        self.data_sample = float(kwargs.get("data_sample", "1"))
+        self.random_state = int(kwargs.get("random_state", "123"))
+
+        if self.data_sample > 1:
+            self.data_sample = min(self.data_sample, len(self.df)) / len(self.df)
+
+        if self.data_sample != 1:
+            list_stratum = []
+            for tpc in self.df[self.topic_col].unique():
+                tpc_df = self.df.query(f"{self.topic_col} == @tpc")
+                for lbl in self.df[self.label_col].unique():
+                    list_stratum += [tpc_df.query(f"{self.label_col} == @lbl")]
+
+            self.df = pd.concat(
+                objs = [
+                    stratum_df.sample(
+                        frac=self.data_sample,
+                        random_state=self.random_state
+                    ) for stratum_df in list_stratum
+                ]
+            )
+            self.df.reset_index(drop=True, inplace=True)
+        
         self.tgt2vec, self.vec2tgt, self.tgt_cnt = create_tgt_lookup_tables(self.df[self.label_col])
         self.df["vec_target"] = [self.convert_lbl_to_vec(tgt, self.tgt2vec) for tgt in self.df[self.label_col]]
         self.n_labels = len(self.tgt_cnt)

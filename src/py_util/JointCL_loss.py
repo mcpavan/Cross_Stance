@@ -7,10 +7,10 @@ class TraditionCriterion(_Loss):
     def __init__(self, batch_size, num_labels):
         super(TraditionCriterion, self).__init__()
         self.amount = batch_size
-        if num_labels < 3:
-            self.ce_loss = nn.BCELoss()
-        else:
-            self.ce_loss = nn.CrossEntropyLoss()
+        # if num_labels < 3:
+        #     self.ce_loss = nn.BCELoss()
+        # else:
+        self.ce_loss = nn.CrossEntropyLoss()
 
     def forward(self, probs, target):  # (B,C) (B)
         loss = self.ce_loss(probs, target)
@@ -87,11 +87,14 @@ class Target_loss(nn.Module):
     """Supervised Contrastive Learning: https://arxiv.org/pdf/2004.11362.pdf.
     It also supports the unsupervised contrastive loss in SimCLR"""
     def __init__(self, temperature=0.07, contrast_mode='all',
-                 base_temperature=0.07):
+                 base_temperature=0.07, alpha=0.8, beta=1.2):
         super(Target_loss, self).__init__()
         self.temperature = temperature
         self.contrast_mode = contrast_mode
         self.base_temperature = base_temperature
+
+        self.alpha = nn.Parameter(torch.Tensor([alpha]))
+        self.beta = nn.Parameter(torch.Tensor([beta]))
 
     def forward(self, features, labels=None, target=None, prototype=None, mask=None):
 
@@ -112,18 +115,25 @@ class Target_loss(nn.Module):
             raise ValueError('Num of labels does not match num of features')
         mask_target = torch.eq(target, target.T).float().to(device)
 
-        prototype = prototype.contiguous().view(-1, 1)
-        if prototype.shape[0] != batch_size:
-            raise ValueError('Num of labels does not match num of features')
-        mask_prototype = torch.eq(prototype, prototype.T).float().to(device)
+        alpha = torch.sigmoid(self.alpha).to(device)
+        beta = 1 + torch.sigmoid(self.beta).to(device)
+
+        # prototype = prototype.contiguous().view(-1, 1)
+        # if prototype.shape[0] != batch_size:
+        #     raise ValueError('Num of labels does not match num of features')
+        # mask_prototype = torch.eq(prototype, prototype.T).float().to(device)
 
 
-        mask_add = (mask_prototype+mask_target)
-        one = torch.ones_like(mask_add)
-        mask_add = torch.where(mask_add > 0.5, one, mask_add)
-        mask = mask_labels* mask_add
-        mask = mask.add(0.0000001)
+        # mask_add = (mask_prototype+mask_target)
+        # one = torch.ones_like(mask_add)
+        # mask_add = torch.where(mask_add > 0.5, one, mask_add)
+        # mask = mask_labels* mask_add
+        # mask = mask.add(0.0000001)
 
+        mask = mask_labels * mask_target
+        mask = (mask_labels - mask) * beta + mask * alpha
+
+        
         contrast_count = features.shape[1]
         contrast_feature = torch.cat(torch.unbind(features, dim=1), dim=0)
         if self.contrast_mode == 'one':
@@ -145,7 +155,8 @@ class Target_loss(nn.Module):
             0
         )
         mask_pos = mask * logits_mask
-        mask_neg = (torch.ones_like(mask) - mask) * logits_mask
+        # mask_neg = (torch.ones_like(mask) - mask) * logits_mask
+        mask_neg = (torch.ones_like(mask_labels) - mask_labels) * logits_mask
         # mask_neg = logits_mask
 
         similarity = torch.exp(torch.mm(anchor_feature, contrast_feature.t()) / self.temperature)

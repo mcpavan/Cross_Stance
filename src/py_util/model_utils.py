@@ -18,6 +18,7 @@ class TorchModelHandler:
 
         self.dataloader = params["dataloader"]
         self.num_labels = self.model.num_labels
+        self.output_dim = 1 if self.num_labels < 1 else self.num_labels
         self.name = params["name"]
         
         self.loss_function = params["loss_function"]
@@ -159,7 +160,7 @@ class TorchModelHandler:
         :param name: the name of this score function, to be used in storing the scores.
         :param score_dict: the dictionary used to store the scores.
         '''
-        if self.num_labels < 3:
+        if self.output_dim == 1:
             vals = score_fn(true_labels, (pred_labels>0.5)*1, average=None, labels=range(self.num_labels))
         else:
             if len(true_labels.shape) > 1 and true_labels.shape[-1] != 1:
@@ -357,7 +358,7 @@ class TOADTorchModelHandler(TorchModelHandler):
             # zero gradients before EVERY optimizer step3
             label_tensor = torch.stack(batch_data["label"]).T
             if len(label_tensor.shape) > 1 and label_tensor.shape[-1] != 1:
-                label_tensor = label_tensor.argmax(dim=1).reshape(-1,1)
+                label_tensor = label_tensor.argmax(dim=1).reshape(-1)
 
             topic_tensor = torch.stack(batch_data["topic_label"]).T
             if len(topic_tensor.shape) > 1 and topic_tensor.shape[-1] != 1:
@@ -439,7 +440,7 @@ class TOADTorchModelHandler(TorchModelHandler):
                 #zero gradients before every optimizer step
                 label_tensor = torch.stack(batch_data["label"]).T
                 if len(label_tensor.shape) > 1 and label_tensor.shape[-1] != 1:
-                    label_tensor = label_tensor.argmax(dim=1).reshape(-1,1)
+                    label_tensor = label_tensor.argmax(dim=1).reshape(-1)
 
                 topic_tensor = torch.stack(batch_data["topic_label"]).T
                 if len(topic_tensor.shape) > 1 and topic_tensor.shape[-1] != 1:
@@ -788,7 +789,8 @@ class JointCLTorchModelHandler(TorchModelHandler):
         self.target_loss_fn = params["target_loss_fn"]
         self.temperature = params["temperature"]
         self.train_loader_prototype = params["train_loader_prototype"]
-
+        self.output_dim = self.num_labels
+        
     def compute_features(self, train_loader):
         print('Computing features...')
         self.model.eval()
@@ -885,7 +887,7 @@ class JointCLTorchModelHandler(TorchModelHandler):
 
     def run_prototype(self,train_loader):
         self.warmup_epoch = 0
-        self.num_cluster = [5]
+        self.num_cluster = [25]
 
         features = self.compute_features(train_loader)
 
@@ -924,7 +926,7 @@ class JointCLTorchModelHandler(TorchModelHandler):
             if batch_n % int(len(self.dataloader)/self.cluster_times) == 0:
                 cluster_result = self.run_prototype(self.train_loader_prototype)
 
-            label_tensor = torch.stack(batch_data["label"]).T.type(torch.FloatTensor)
+            label_tensor = torch.stack(batch_data["label"]).T.type(torch.LongTensor)
             if len(label_tensor.shape) > 1 and label_tensor.shape[-1] != 1:
                 label_tensor = label_tensor.argmax(dim=1).reshape(-1,1)
             label_tensor = label_tensor.squeeze()
@@ -998,7 +1000,7 @@ class JointCLTorchModelHandler(TorchModelHandler):
         
         for batch_n, batch_data in tqdm(enumerate(data)):
             with torch.no_grad():
-                label_tensor = torch.stack(batch_data["label"]).T.type(torch.FloatTensor)
+                label_tensor = torch.stack(batch_data["label"]).T.type(torch.LongTensor)
                 if len(label_tensor.shape) > 1 and label_tensor.shape[-1] != 1:
                     label_tensor = label_tensor.argmax(dim=1).reshape(-1,1)
                 label_tensor = label_tensor.squeeze(-1)

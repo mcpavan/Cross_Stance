@@ -57,15 +57,16 @@ class BERT_SCL_Proto_Graph(nn.Module):
         self.bert = bert_layer.bert_layer
         self.bert_dim = bert_dim
         self.num_labels = num_labels
-        self.output_dim = 1 if self.num_labels < 3 else self.num_labels
+        # self.output_dim = 1 if self.num_labels < 3 else self.num_labels
+        self.output_dim = self.num_labels
     	
         self.dropout = nn.Dropout(dropout)
-        # self.dense = nn.Linear(bert_dim*2, self.output_dim)
-        self.dense = PredictionLayer(
-            input_dim=bert_dim*2,
-            output_dim=self.output_dim,
-            use_cuda=self.use_cuda,
-        )
+        self.dense = nn.Linear(bert_dim*2, self.output_dim)
+        # self.dense = PredictionLayer(
+        #     input_dim=bert_dim*2,
+        #     output_dim=self.output_dim,
+        #     use_cuda=self.use_cuda,
+        # )
         self.gnn = GraphNN(
             att_heads=att_heads,
             bert_dim=bert_dim,
@@ -76,7 +77,7 @@ class BERT_SCL_Proto_Graph(nn.Module):
 
         if self.use_cuda:
             self.dropout = self.dropout.to("cuda")
-            # self.dense = self.dense.to("cuda")
+            self.dense = self.dense.to("cuda")
 
     def forward(self, inputs):
         concat_bert_indices, concat_segments_indices, centroids = inputs

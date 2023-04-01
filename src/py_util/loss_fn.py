@@ -41,10 +41,11 @@ class TOADLoss(torch.nn.Module):
         self.adv_param = 0. # start with the adversary weight set to 0
 
         self.semi_sup = semi_sup
-        if n_outputs < 3:
+        self.n_outputs = n_outputs
+        if self.n_outputs < 3:
             self.stance_loss = nn.BCELoss()
         elif self.semi_sup:
-            self.stance_loss = nn.CrossEntropyLoss(ignore_index=n_outputs)
+            self.stance_loss = nn.CrossEntropyLoss(ignore_index=self.n_outputs)
         else:
             self.stance_loss = nn.CrossEntropyLoss()
         self.topic_loss = nn.CrossEntropyLoss()
@@ -77,20 +78,43 @@ class TOADLoss(torch.nn.Module):
             text_l = text_l.to("cuda")
             topic_l = topic_l.to("cuda")
 
+        f_ = open("out.txt", "w")
+
+        print("self.rec_weight",self.rec_weight, file=f_)
+        print("pred_info['text']",pred_info['text'], file=f_)
+        print("pred_info['text_recon_embeds']",pred_info['text_recon_embeds'], file=f_)
+        print("text_l",text_l, file=f_)
         lrec = self.rec_weight * self.rec_loss(
             ori_embeds=pred_info['text'],
             model_embeds=pred_info['text_recon_embeds'],
             embed_l=text_l
         )
+        
+        print("pred_info['topic']",pred_info['topic'], file=f_)
+        print("pred_info['topic_recon_embeds']",pred_info['topic_recon_embeds'], file=f_)
+        print("topic_l",topic_l, file=f_)
         lrec_topic = self.rec_weight * self.rec_loss(
             ori_embeds=pred_info['topic'],
             model_embeds=pred_info['topic_recon_embeds'],
             embed_l=topic_l
         )
 
-        ltrans = self.trans_loss(W=pred_info['W'])
-        llabel = self.stance_loss(pred_info['stance_pred'].type(torch.FloatTensor), labels.type(torch.FloatTensor))
 
+        print("pred_info['W']",pred_info['W'], file=f_)
+        ltrans = self.trans_loss(W=pred_info['W'])
+        
+        if self.n_outputs < 3:
+            labels = labels.type(torch.FloatTensor)
+        else:
+            labels = labels.type(torch.LongTensor)
+
+        print("pred_info['stance_pred']",pred_info['stance_pred'], file=f_)
+        print("labels",labels, file=f_)
+        llabel = self.stance_loss(
+            pred_info['stance_pred'].type(torch.FloatTensor),
+            labels
+        )
+    
         ladv = torch.tensor(0)
         adversarial_loss = torch.tensor(0)
         
@@ -98,6 +122,11 @@ class TOADLoss(torch.nn.Module):
             ladv = ladv.to('cuda')
             adversarial_loss = adversarial_loss.to('cuda')
         
+        print("pred_info['adv_pred'].squeeze_()",pred_info['adv_pred'].squeeze_(), file=f_)
+        print("pred_info['topic_i'].squeeze_()",pred_info['topic_i'].squeeze_(), file=f_)
+        f_.flush()
+        f_.close()
+        exit()
         if compute_adv_loss:        #Ladv is computed only on the train dataset else it is left as 0.
             ladv = self.topic_loss(pred_info['adv_pred'].squeeze_(), pred_info['topic_i'].squeeze_())
         
