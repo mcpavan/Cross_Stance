@@ -34,7 +34,7 @@ def load_data(config, args, data_key="trn", proto=False):
             bert_pretrained_model = config.get("bert_pretrained_model"),
             is_joint = config.get("is_joint"),
             sample_weights = config.get("sample_weights"),
-            data_sample = float(args.get("train_data_sample", 1.0)) if data_key == "trn" and proto==True else 1,
+            data_sample = float(args.get("train_data_sample", 1.0)) if data_key == "trn" else 1,
             random_state = float(args.get("random_state", 123)),
         )
     else:
@@ -916,9 +916,8 @@ def main(args):
         prototype_loss_weight = float(config.get("prototype_loss_weight", "0.2"))
         stance_loss_weight = float(config.get("stance_loss_weight", "1.0"))
 
-        train_proto_data = load_data(config, args, data_key="trn", proto=True)
         train_loader_prototype = torch.utils.data.DataLoader(
-            train_proto_data,
+            train_data,
             batch_size=int(config['batch_size']),
             shuffle=True,
             drop_last=args["drop_last_batch"],

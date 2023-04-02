@@ -9,8 +9,8 @@ dp:0.1
 gnn_dims:192,192
 att_heads:4,4
 cluster_times:1
-prototype_loss_weight:0.2
-stance_loss_weight:1.0
+prototype_loss_weight:0.05
+stance_loss_weight:2.0
 text_col:Text
 topic_col:Target
 label_col:Polarity
@@ -21,7 +21,7 @@ add_special_tokens:1
 is_joint:1
 sample_weights:0
 batch_size:8
-learning_rate:0.0001
+learning_rate:1e-4
 n_output_classes:2
-ckp_path:../../checkpoints/ustancebr/jointcl/V0/
-epochs:10
+ckp_path:../../checkpoints/ustancebr/jointcl/V0/500/
+epochs:50
