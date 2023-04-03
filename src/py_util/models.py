@@ -315,7 +315,7 @@ class TOAD(torch.nn.Module):
         self.num_topics = num_topics
         self.num_layers = num_layers
         self.num_labels = num_labels
-        self.output_dim = 1 if self.num_labels == 2 else self.num_labels
+        self.output_dim = 1 if self.num_labels <= 2 else self.num_labels
         self.use_cuda = use_cuda
         self.proj_layer_dim = proj_layer_dim
 

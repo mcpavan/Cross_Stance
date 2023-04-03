@@ -18,7 +18,8 @@ class TorchModelHandler:
 
         self.dataloader = params["dataloader"]
         self.num_labels = self.model.num_labels
-        self.output_dim = 1 if self.num_labels < 1 else self.num_labels
+        # self.output_dim = 1 if self.num_labels < 1 else self.num_labels
+        self.output_dim = self.model.output_dim
         self.name = params["name"]
         
         self.loss_function = params["loss_function"]
