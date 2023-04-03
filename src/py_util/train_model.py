@@ -19,7 +19,7 @@ def load_config_file(config_file_path):
     
     return config
 
-def load_data(config, args, data_key="trn", proto=False):
+def load_data(config, args, data_key="trn"):
     if 'bert' in config or 'bert' in config['name']:
         data = datasets.BertStanceDataset(
             data_file = args[f'{data_key}_data'],
@@ -735,6 +735,7 @@ def main(args):
             stance_dim=int(config['stance_classifier_dimension']),
             topic_dim=int(config["topic_classifier_dimension"]),
             num_topics=train_data.get_num_topics(),
+            proj_layer_dim=int(config.get("proj_layer_dim", 128)),
             num_layers=int(config.get("lstm_layers","1")),
             num_labels=nl,
             drop_prob=float(config.get('dropout', "0")),
@@ -1102,6 +1103,12 @@ if __name__ == "__main__":
 # train TOAD (Hold1TopicOut)
 # python train_model.py -m train -c ../../config/Bert_TOAD_example.txt -t ../../../data/ustancebr/v2/hold1topic_out/final_bo_train.csv -v ../../../data/ustancebr/v2/hold1topic_out/final_bo_valid.csv -p ../../../data/ustancebr/v2/hold1topic_out/final_bo_test.csv -n bo -e 2 -s 1
 # python train_model.py -m train -c ../../config/Bert_TOAD_example.txt -t ../../data/ustancebr/v2/teste_pqno_h1to/pqno_bo_train.csv -v ../../data/ustancebr/v2/teste_pqno_h1to/pqno_bo_test.csv -p ../../data/ustancebr/v2/teste_pqno_h1to/pqno_bo_test.csv -n bo -e 2
+
+# train TOAD (SEMEVAL Hold1TopicOut)
+# python train_model.py -m train -c ../../config/Bert_TOAD_example_Semeval.txt -t ../../../data/semeval/hold1topic_out/final_dt_train.csv -v ../../../data/semeval/hold1topic_out/final_dt_valid.csv -p ../../../data/semeval/hold1topic_out/final_dt_test.csv -n dt -e 2 -s 1
+
+# train TOAD (SEMEVAL indomain)
+# python train_model.py -m train -c ../../config/Bert_TOAD_example_Semeval.txt -t ../../../data/semeval/indomain/final_hc_train.csv -v ../../../data/semeval/indomain/final_hc_valid.csv -p ../../../data/semeval/indomain/final_hc_test.csv -n hc -e 2 -s 1
 
 # train AAD (Simple Domain)
 # python train_model.py -m train -c ../../config/Bert_AAD_example.txt -t ../../data/ustancebr/v2/simple_domain/final_lu_train.csv -g ../../data/ustancebr/v2/simple_domain/final_bo_train.csv -v ../../data/ustancebr/v2/simple_domain/final_bo_valid.csv -p ../../data/ustancebr/v2/simple_domain/final_bo_test.csv -n bo -e 2 -s 1

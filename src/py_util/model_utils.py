@@ -373,7 +373,7 @@ class TOADTorchModelHandler(TorchModelHandler):
 
                 text_mask = text_mask.to("cuda")
                 topic_mask = topic_mask.to("cuda")
-            
+
             self.model.zero_grad()
 
             # get the embeddings for text and topic and creates a dict to pass as params to the model
@@ -387,7 +387,7 @@ class TOADTorchModelHandler(TorchModelHandler):
                 "topic_length": batch_data["topic"]["input_length"],
                 "topic_mask": topic_mask,
             }
-                
+
             #apply the text and topic embeddings to the model
             pred_info = self.model(**model_inputs)
 

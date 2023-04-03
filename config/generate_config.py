@@ -171,30 +171,32 @@ values_dict = {
             "pablocosta/bertabaporu-base-uncased",
         ],
         "bert_layers": [
-            # "-1",
-            "-4,-3,-2,-1",
+            "-1",
+            # "-4,-3,-2,-1",
         ],
         "lstm_layers": [
             "1",
             # "2",
         ],
         "lstm_hidden_dim": [
-            "16",
-            "128",
+            128,
+            226,
         ],
         "stance_classifier_dimension": [
-            4,
-            16,
+            201,
+            402,
+            804,
         ],
         "topic_classifier_dimension": [
-            4,
-            16,
+            140,
+            280,
+            420,
         ],
         "learning_rate": [
-            1e-7,
+            1e-5,
         ],
         "batch_size": [
-            32
+            32,
         ],
     },
 }

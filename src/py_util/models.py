@@ -303,8 +303,8 @@ class CrossNet(torch.nn.Module):
 
 class TOAD(torch.nn.Module):
     def __init__(self, hidden_dim, text_input_dim, topic_input_dim,
-                       stance_dim, topic_dim, num_topics, num_layers=1,
-                       num_labels=3, drop_prob=0, use_cuda=False):
+                       stance_dim, topic_dim, num_topics, proj_layer_dim=128,
+                       num_layers=1, num_labels=3, drop_prob=0, use_cuda=False):
         super(TOAD, self).__init__()
 
         self.hidden_dim = hidden_dim
@@ -317,11 +317,27 @@ class TOAD(torch.nn.Module):
         self.num_labels = num_labels
         self.output_dim = 1 if self.num_labels == 2 else self.num_labels
         self.use_cuda = use_cuda
+        self.proj_layer_dim = proj_layer_dim
+
+        self.text_proj_layer = nn.Linear(
+            in_features=self.text_input_dim,
+            out_features=self.proj_layer_dim,
+            bias=False,
+        )
+
+        self.topic_proj_layer = nn.Linear(
+            in_features=self.topic_input_dim,
+            out_features=self.proj_layer_dim,
+            bias=False,
+        )
+        if self.use_cuda:
+            self.text_proj_layer.to("cuda")
+            self.topic_proj_layer.to("cuda")
         
         self.enc = ml.BiCondLSTMLayer(
             hidden_dim=self.hidden_dim,
-            text_input_dim=self.text_input_dim,
-            topic_input_dim=self.topic_input_dim,
+            text_input_dim=self.proj_layer_dim,#self.text_input_dim,
+            topic_input_dim=self.proj_layer_dim,#self.topic_input_dim,
             num_layers=self.num_layers,
             lstm_dropout=drop_prob,
             use_cuda=self.use_cuda,
@@ -372,11 +388,16 @@ class TOAD(torch.nn.Module):
     def forward(self, text_embeddings, topic_embeddings, text_length, topic_length, text_mask=None, topic_mask=None):
         # text: (B, T, E), topic: (B, C, E), text_l: (B), topic_l: (B), text_mask: (B, T), topic_mask: (B, C)
 
+        proj_text_emb = self.text_proj_layer(text_embeddings)
+        proj_topic_emb = self.topic_proj_layer(topic_embeddings)
+
         # apply dropout on the input
-        dropped_text = self.in_dropout(text_embeddings)
+        # dropped_text = self.in_dropout(text_embeddings)
+        dropped_text = self.in_dropout(proj_text_emb)
 
         dropped_text = dropped_text.transpose(0, 1) # (T, B, E)
-        topic_embeddings_t = topic_embeddings.transpose(0, 1) # (C, B, E)
+        # topic_embeddings_t = topic_embeddings.transpose(0, 1) # (C, B, E)
+        topic_embeddings_t = proj_topic_emb.transpose(0, 1) # (C, B, E)
 
         # encode the text
         text_output, _, last_top_hn, topic_output = self.enc(dropped_text, topic_embeddings_t, text_length, topic_length)
