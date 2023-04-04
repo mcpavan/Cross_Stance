@@ -315,7 +315,7 @@ class TOAD(torch.nn.Module):
         self.num_topics = num_topics
         self.num_layers = num_layers
         self.num_labels = num_labels
-        self.output_dim = 1 if self.num_labels <= 2 else self.num_labels
+        self.output_dim = self.num_labels #1 if self.num_labels <= 2 else self.num_labels
         self.use_cuda = use_cuda
         self.proj_layer_dim = proj_layer_dim
 
@@ -373,7 +373,7 @@ class TOAD(torch.nn.Module):
             input_dim=multiplier*self.hidden_dim,
             hidden_dim=self.stance_dim,
             output_dim=self.output_dim,
-            activation_fn=nn.Sigmoid() if self.output_dim == 1 else nn.Softmax(),#nn.ReLU(),
+            activation_fn=nn.ReLU(),
             use_cuda=self.use_cuda
         )
 
@@ -381,7 +381,7 @@ class TOAD(torch.nn.Module):
             input_dim=2*self.hidden_dim,
             hidden_dim=topic_dim,
             output_dim=self.num_topics,
-            activation_fn=nn.Sigmoid() if self.output_dim == 1 else nn.Softmax(),#nn.ReLU(),
+            activation_fn=nn.ReLU(),
             use_cuda=self.use_cuda
         )
 

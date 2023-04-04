@@ -42,9 +42,10 @@ class TOADLoss(torch.nn.Module):
 
         self.semi_sup = semi_sup
         self.n_outputs = n_outputs
-        if self.n_outputs < 3:
-            self.stance_loss = nn.BCELoss()
-        elif self.semi_sup:
+        # if self.n_outputs < 3:
+        #     self.stance_loss = nn.BCELoss()
+        # elif self.semi_sup:
+        if self.semi_sup and self.n_outputs>=3:
             self.stance_loss = nn.CrossEntropyLoss(ignore_index=self.n_outputs)
         else:
             self.stance_loss = nn.CrossEntropyLoss()
@@ -92,10 +93,10 @@ class TOADLoss(torch.nn.Module):
 
         ltrans = self.trans_loss(W=pred_info['W'])
         
-        if self.n_outputs < 3:
-            labels = labels.type(torch.FloatTensor)
-        else:
-            labels = labels.type(torch.LongTensor)
+        # if self.n_outputs < 3:
+        #     labels = labels.type(torch.FloatTensor)
+        # else:
+        labels = labels.type(torch.LongTensor)
 
         llabel = self.stance_loss(
             pred_info['stance_pred'].type(torch.FloatTensor),

@@ -359,11 +359,15 @@ class TOADTorchModelHandler(TorchModelHandler):
             # zero gradients before EVERY optimizer step3
             label_tensor = torch.stack(batch_data["label"]).T
             if len(label_tensor.shape) > 1 and label_tensor.shape[-1] != 1:
-                label_tensor = label_tensor.argmax(dim=1).reshape(-1)
+                label_tensor = label_tensor.argmax(dim=1).reshape(-1,1)
+            label_tensor = label_tensor.squeeze()
+            if len(label_tensor.shape) == 0:
+                    continue
 
             topic_tensor = torch.stack(batch_data["topic_label"]).T
             if len(topic_tensor.shape) > 1 and topic_tensor.shape[-1] != 1:
                 topic_tensor = topic_tensor.argmax(dim=1).reshape(-1,1)
+            topic_tensor = topic_tensor.squeeze()
 
             text_mask = batch_data["text"]["attention_mask"].type(torch.IntTensor)
             topic_mask = batch_data["topic"]["attention_mask"].type(torch.IntTensor)
@@ -441,12 +445,16 @@ class TOADTorchModelHandler(TorchModelHandler):
                 #zero gradients before every optimizer step
                 label_tensor = torch.stack(batch_data["label"]).T
                 if len(label_tensor.shape) > 1 and label_tensor.shape[-1] != 1:
-                    label_tensor = label_tensor.argmax(dim=1).reshape(-1)
+                    label_tensor = label_tensor.argmax(dim=1).reshape(-1,1)
+                label_tensor = label_tensor.squeeze()
+                if len(label_tensor.shape) == 0:
+                    continue
 
                 topic_tensor = torch.stack(batch_data["topic_label"]).T
                 if len(topic_tensor.shape) > 1 and topic_tensor.shape[-1] != 1:
                     topic_tensor = topic_tensor.argmax(dim=1).reshape(-1,1)
-                
+                topic_tensor = topic_tensor.squeeze()
+
                 text_mask = batch_data["text"]["attention_mask"].type(torch.IntTensor)
                 topic_mask = batch_data["topic"]["attention_mask"].type(torch.IntTensor)
 
