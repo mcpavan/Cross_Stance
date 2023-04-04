@@ -180,17 +180,17 @@ values_dict = {
         ],
         "lstm_hidden_dim": [
             128,
-            226,
+            # 226
         ],
         "stance_classifier_dimension": [
             201,
             402,
-            804,
+            # 804,
         ],
         "topic_classifier_dimension": [
             140,
             280,
-            420,
+            # 420,
         ],
         "learning_rate": [
             1e-5,
