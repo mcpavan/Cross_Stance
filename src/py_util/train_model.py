@@ -373,6 +373,18 @@ def predict_helper(pred_lst, proba_lst, pred_data, config):
     cols += [config['label_col']+'_pred', config['label_col']+'_proba']
     return pd.DataFrame(out_data, columns=cols)
 
+def llm_collate_fn(batch):
+    collated_dict = {}
+
+    for instance in batch:
+        for k, v in instance.items():
+            if isinstance(v, str): 
+                collated_dict[k] = collated_dict.get(k, []) + [v]
+            else:
+                collated_dict[k] = collated_dict.get(k, []) + [torch.Tensor(v)]
+    
+    return collated_dict
+
 def main(args):
     torch.manual_seed(SEED)
     torch.cuda.manual_seed_all(SEED)
@@ -382,6 +394,7 @@ def main(args):
     # load config file #
     ####################
     config = load_config_file(args['config_file'])
+    is_llm = config.get("model_type","").lower() in ["llama_cpp", "hf_llm"]
 
     #############
     # LOAD DATA #
@@ -398,7 +411,8 @@ def main(args):
             train_data,
             batch_size=int(config['batch_size']),
             shuffle=True,
-            drop_last=args["drop_last_batch"]
+            drop_last=args["drop_last_batch"],
+            collate_fn = llm_collate_fn if is_llm else None,
         )
     else:
         if args["mode"] == "train":
@@ -415,7 +429,8 @@ def main(args):
             vld_data,
             batch_size=int(config['batch_size']),
             shuffle=False,
-            drop_last=args["drop_last_batch"]
+            drop_last=args["drop_last_batch"],
+            collate_fn = llm_collate_fn if is_llm else None,
         )
     else:
         vld_dataloader = None
@@ -430,7 +445,8 @@ def main(args):
             tst_data,
             batch_size=int(config['batch_size']),
             shuffle=False,
-            drop_last=args["drop_last_batch"]
+            drop_last=args["drop_last_batch"],
+            collate_fn = llm_collate_fn if is_llm else None,
         )
     else:
         tst_dataloader = None

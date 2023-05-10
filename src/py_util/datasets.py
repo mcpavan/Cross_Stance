@@ -349,9 +349,6 @@ class LLMStanceDataset(Dataset):
         if kwargs.get("model_type") == "hf_llm":
             self.tokenized_input = True
             self.pretrained_model_name = kwargs["pretrained_model_name"]
-
-            self.df["input_ids"] = [[] for _ in range(len(self.df))]
-            self.df["attention_mask"] = [[] for _ in range(len(self.df))]
             
             tokenizer_params = kwargs.get("tokenizer_params", {})
             self.tokenizer = AutoTokenizer.from_pretrained(
@@ -380,10 +377,11 @@ class LLMStanceDataset(Dataset):
                     return_tensors="pt",
                 )
 
-                if isinstance(enc_prompt, dict):
-                    # self.df.loc[idx, "bert_token_text"] = enc_text
+                if hasattr(enc_prompt, "items"):
                     for k, v in enc_prompt.items():
-                        self.df.at[idx, k] = enc_prompt[k]
+                        if k not in self.df.columns:
+                            self.df[k] = [[] for _ in range(len(self.df))]
+                        self.df.at[idx, k] = v
                 else:
                     self.df.at[idx, "input_ids"] = enc_prompt
         
