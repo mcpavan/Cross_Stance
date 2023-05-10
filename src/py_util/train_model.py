@@ -42,6 +42,7 @@ def load_data(config, args, data_key="trn"):
             sample_weights = config.get("sample_weights"),
             data_sample = float(args.get("train_data_sample", 1.0)) if data_key == "trn" else 1,
             random_state = float(args.get("random_state", 123)),
+            tokenizer_params = tokenizer_params,
         )
     elif config.get("model_type", "").lower() in ["llama_cpp", "hf_llm"]:
         data = datasets.LLMStanceDataset(
@@ -55,6 +56,8 @@ def load_data(config, args, data_key="trn"):
             sample_weights = config.get("sample_weights"),
             data_sample = float(args.get("train_data_sample", 1.0)) if data_key == "trn" else 1,
             random_state = float(args.get("random_state", 123)),
+            model_type = config.get("model_type", "").lower(),
+            tokenizer_params = tokenizer_params,
         )
     else:
         #TODO: Create dataset for other types of models

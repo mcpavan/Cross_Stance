@@ -292,6 +292,7 @@ class LLMStanceDataset(Dataset):
                dataset considering both topics and label. Default=False
         :param data_sample: int or float that indicates to load only a sample of the original dataset in the file.
         :param random_state: random seed for generating the sample.
+        :param model_type: "llama_cpp" or "hf_llm"
         :param tokenizer_params: dict of parameters passed to the tokenizer loader
         """
 
@@ -402,8 +403,8 @@ class LLMStanceDataset(Dataset):
         }
 
         if self.tokenized_input:
-            return_dict["input_ids"]: self.df.loc[index, "input_ids"]
-            return_dict["attention_mask"]: self.df.loc[index, "attention_mask"]
+            return_dict["input_ids"] = self.df.loc[index, "input_ids"]
+            return_dict["attention_mask"] = self.df.loc[index, "attention_mask"]
         
         if self.sample_weights:
             return_dict["sample_weight"] = self.df.loc[index, "weight"]
