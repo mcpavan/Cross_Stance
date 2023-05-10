@@ -194,7 +194,7 @@ class TorchModelHandler:
         y_pred, labels, loss = self.predict(data)
         score_dict = self.score(y_pred, labels)
 
-        return score_dict, loss
+        return score_dict, loss, y_pred
 
     def predict(self, data=None):
         self.model.eval()
@@ -270,14 +270,14 @@ class TorchModelHandler:
         :return: a map from score names to values
         '''
         # Passing data_name to eval_model as evaluation of adv model on train and dev are different
-        scores, loss = self.eval_model(data=data)
+        scores, loss, y_pred = self.eval_model(data=data)
         print("Evaluating on \"{}\" data".format(data_name))
         for metric_name, metric_dict in scores.items():
             for class_name, metric_val in metric_dict.items():
                 print(f"{metric_name}_{class_name}: {metric_val:.4f}", end="\t")
             print()
 
-        return scores, loss
+        return scores, loss, y_pred
 
     def score(self, pred_labels, true_labels):
         '''
@@ -514,7 +514,7 @@ class TOADTorchModelHandler(TorchModelHandler):
         stance_pred, stance_labels, topic_pred, topic_labels, loss = self.predict(data)
         score_dict = self.score(stance_pred, stance_labels)
 
-        return score_dict, loss
+        return score_dict, loss, stance_pred
 
 class AADTorchModelHandler(TorchModelHandler):
     def __init__(self, num_ckps=1, checkpoint_path='./data/checkpoints/', use_cuda=False, **params):
@@ -1046,3 +1046,103 @@ class JointCLTorchModelHandler(TorchModelHandler):
         print("0.8 - 0.9", ((all_y_pred.numpy() > 0.8) * (all_y_pred.numpy()<= 0.9)).sum(axis=0))
         print("0.9 - 1.0", (all_y_pred.numpy() > 0.9).sum(axis=0))
         return all_y_pred.numpy(), all_labels.numpy(), avg_loss#partial_loss
+
+import re
+class LLMTorchModelHandler(TorchModelHandler):
+    def __init__(self, num_ckps=1, checkpoint_path='./data/checkpoints/', use_cuda=False, **params):
+
+        TorchModelHandler.__init__(
+            self,
+            num_ckps=num_ckps,
+            checkpoint_path=checkpoint_path,
+            use_cuda=use_cuda,
+            **params
+        )
+        
+        self.model = params["model"]
+        self.model_params = params.get("model_params", {})
+        self.dataset = params["dataset"]
+        self.tokenizer = self.dataset.tokenizer
+        self.tokenized_input = self.tokenizer is None
+        self.output_format = params["output_format"]
+        self.output_dim = self.num_labels
+        self.output_max_score = params.get("öutput_max_score", 10)
+        self.output_parser = params.get("output_parser", self._output_parser_fn)
+        
+    def _output_parser_fn(self, output):
+        output = output.strip().lower()
+        
+        try:
+            if self.output_format == "set":
+                possible_values = '|'.join(self.dataset.tgt2vec.keys())
+                set_regex = re.search(f"({possible_values})", output)
+
+                prediction = output[set_regex.start():set_regex.end()]
+                prediction = self.dataset.convert_lbl_to_vec(prediction, self.dataset.tgt2vec)
+            
+            elif self.output_format == "score":
+                score_regex = re.search("([0-9]+)(/[0-9]+)*", output)
+                
+                prediction = output[score_regex.start():score_regex.end()]
+                if "/" in prediction:
+                    prediction = prediction.split("/")
+                    prediction = float(prediction[0])/float(prediction[1])
+                else:
+                    prediction = float(prediction)/self.output_max_score
+        except:
+            prediction = None
+
+        return prediction
+    
+    def predict(self, data=None):
+        all_y_pred = []
+        all_labels = []
+        errors_ = []
+        if data is None:
+            data = self.dataloader
+        
+        for batch_n, batch_data in tqdm(enumerate(data)):
+            label_tensor = torch.stack(batch_data["label"]).T.type(torch.LongTensor)
+            if len(label_tensor.shape) > 1 and label_tensor.shape[-1] != 1:
+                label_tensor = label_tensor.argmax(dim=1).reshape(-1,1)
+            label_tensor = label_tensor.squeeze(-1).numpy()
+                
+            all_labels += label_tensor.tolist()
+            
+            if self.model.model_type == "llama_cpp":
+                prompt_list = batch_data["prompt"]
+
+                str_output_tensor = []
+                for prompt_ in prompt_list:
+                    # print(prompt_)
+                    str_output_tensor += [
+                        self.model(
+                            prompt = prompt_,
+                            params = self.model_params,
+                        )
+                    ]
+                    
+                    # print(str_output)
+                    # all_y_pred += [self.output_parser(str_output)]
+                
+            elif self.model.model_type == "hugging_face":
+                output_tensor = self.model(
+                    prompt_ids = batch_data["input_ids"],
+                    params = self.model_params,
+                )
+
+                str_output_tensor = self.dataset.decode_tokens(output_tensor)
+
+            for i, str_output in enumerate(str_output_tensor):
+                parsed_out = self.output_parser(str_output)
+                if parsed_out is None:
+                    parsed_out = self.dataset.tgt2vec.most_common(1)[0][0]
+                    errors_ += [(prompt_, str_output)]
+
+                all_y_pred += [parsed_out]
+        
+        with open(f"./llama_cpp_errors/{self.name}", mode="r", encoding="utf-8") as f_:
+            print(errors_, f_)
+
+        return np.array(all_y_pred), np.array(all_labels), None
+    

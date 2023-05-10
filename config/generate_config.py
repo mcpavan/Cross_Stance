@@ -13,6 +13,8 @@ modelname2example = {
     "BertCrossNet": "./Bert_CrossNet_example.txt",
     "BertJointCL": "./Bert_JointCL_example.txt",
     "BertTOAD": "./Bert_TOAD_example.txt",
+    "Llama_4bit": "./Llama_4bit_example.txt",
+    "Llama_8bit": "./Llama_8bit_example.txt",
 }
 
 
@@ -196,7 +198,43 @@ values_dict = {
             1e-5,
         ],
         "batch_size": [
-            32,
+            # 80,
+            16,
+        ],
+    },
+    "Llama_4bit": {
+        "pretrained_model_name": [
+            "../../data/LLMs/ggml-alpaca-7b-q4.bin",
+        ],
+        "prompt": [
+            {
+                "prompt_template_file": "../../data/ustancebr/prompts/stance_prompt_alpaca_score10_0.md",
+                "output_max_score": 10,
+            }
+        ],
+        "batch_size": [
+            # 80,
+            16,
+        ],
+    },
+    "Llama_8bit": {
+        "model": [
+            {
+                "pretrained_model_name": "pablocosta/llama-7b",
+                "hf_model_load_in_8bit":True,
+                "hf_model_use_auth_token": "",
+                "hf_tokenizer_use_auth_token": "",
+            },
+        ],
+        "prompt": [
+            {
+                "prompt_template_file": "../../data/ustancebr/prompts/stance_prompt_alpaca_score10_0.md",
+                "output_max_score": 10,
+            }
+        ],
+        "batch_size": [
+            # 80,
+            16,
         ],
     },
 }
@@ -235,7 +273,11 @@ for model_name_out_file, example_file in modelname2example.items():
         new_config_dict = base_config_dict
 
         for key, value in zip(values_dict[model_name_out_file].keys(), combination):
-            new_config_dict[key] = value
+            if model_name_out_file in ["Llama_8bit", "Llama_8bit"] and key in ["prompt", "model"]:
+                for prompt_key, prompt_value in value.items():
+                    new_config_dict[prompt_key] = prompt_value
+            else:
+                new_config_dict[key] = value
         
         new_config_dict["ckp_path"] = ckp_path \
             .replace(

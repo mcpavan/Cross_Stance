@@ -49,7 +49,7 @@ for eval_file_path in tqdm(glob(f"{eval_base_path}/**/*.txt", recursive=True)):
                 prefix = "valid"
             elif line.startswith('Evaluating on "TEST" data'):
                 prefix = "test"
-            elif prefix != "":
+            elif not line.startswith("saved to") and prefix != "":
                 line_spl = line.split()
                 
                 for i in range(3):
@@ -71,7 +71,7 @@ for eval_file_path in tqdm(glob(f"{eval_base_path}/**/*.txt", recursive=True)):
             eval_results_dict[key] += [None]        
 
 df_results = pd.DataFrame(eval_results_dict)
-df_results.to_csv(out_path, index=False)
+df_results.dropna().to_csv(out_path, index=False)
 
 
 errors_out_cols = [

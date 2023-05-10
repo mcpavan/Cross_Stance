@@ -1,0 +1,14 @@
+name:Llama_4bit_ustancebr_
+model_type:llama_cpp
+pretrained_model_name:../../data/LLMs/ggml-alpaca-7b-q4.bin
+prompt_template_file:../../data/ustancebr/prompts/stance_prompt_alpaca_score10_0.md
+text_col:Text
+topic_col:Target
+label_col:Polarity
+sample_weights:1
+batch_size:32
+n_output_classes:2
+ckp_path:../../checkpoints/ustancebr/V0/
+epochs:1
+output_format:score
+output_max_score:10

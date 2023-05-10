@@ -5,7 +5,7 @@ import torch
 
 from collections import Counter
 from torch.utils.data import Dataset
-from transformers import BertTokenizer
+from transformers import BertTokenizer, AutoTokenizer
 
 class BertStanceDataset(Dataset):
     
@@ -27,6 +27,9 @@ class BertStanceDataset(Dataset):
         :param topic_first: whether to encode the topic first or after the text when is_joint=True. Ignored if is_joint=False. Default=True
         :param sample_weights: whether to generate sample weights to balance the
                dataset considering both topics and label. Default=False
+        :param data_sample: int or float that indicates to load only a sample of the original dataset in the file.
+        :param random_state: random seed for generating the sample.
+        :param tokenizer_params: dict of parameters passed to the tokenizer loader
         """
 
         self.df = pd.read_csv(
@@ -96,9 +99,11 @@ class BertStanceDataset(Dataset):
 
         self.df["weight"] = 0
 
+        tokenizer_params = kwargs.get("tokenizer_params", {})
         self.tokenizer = BertTokenizer.from_pretrained(
             self.bert_pretrained_model,
-             do_lower_case=True
+            do_lower_case=True,
+            **tokenizer_params,
         )
 
         start_time = time.time()
@@ -235,6 +240,183 @@ class BertStanceDataset(Dataset):
 
         return return_dict
     
+    def convert_lbl_to_vec(self, label, lbl2vec=None):
+        """
+        Convert a target to a vector
+        :param labels: a string label
+        :param lbl2vec: a dict containing the map of string labels to vectors
+        :return: A vector representing the label
+        """
+        if not lbl2vec:
+            lbl2vec = self.tgt2vec
+        assert isinstance(label, str), "Target is not String"
+        return lbl2vec.get(label)
+
+    def convert_vec_to_lbl(self, vec, vec2lbl=None):
+        """
+        Convert a vector representing a target to an actual label
+        :param vec: A vector representing a label
+        :param vec2lbl: A dict containing a map of vectors to string labels
+        :return: Label represented by the input vector
+        """
+        if not vec2lbl:
+            vec2lbl = self.vec2tgt
+        assert isinstance(vec, tuple) or isinstance(vec, float), "Target type is not tuple or float"
+        if isinstance(vec, float)==1:
+            vec = vec[0] * len(self.tgt_cnt.keys())
+        return vec2lbl.get(vec) or list(self.vec2lbl.values())[0]
+    
+    def get_topic_list(self):
+        return self.df[self.topic_col].unique().tolist()
+
+    def get_num_topics(self):
+        return len(self.get_topic_list())
+
+class LLMStanceDataset(Dataset):
+    
+    def __init__(self, **kwargs):
+        """
+        Holds the stance dataset.
+
+        :param data_file: path to csv data file
+        :param prompt_file: path to txt file containing the prompt. This process will generate a prompt
+                             following the template by replacing the tokens "{text}" and "{topic}".
+        :param pd_read_kwargs: kwargs to the read_csv
+        :param text_col: name of the text column in the dataset
+        :param topic_col: name of the topic column in the dataset
+        :param label_col: name of the label column in the dataset
+        :param pretrained_model_name: name of the pretrained Language Model. Default=None. In this case,
+                                      no tokenization will be performed, only the prompt will be generated
+                                      follwoing the template.
+        :param sample_weights: whether to generate sample weights to balance the
+               dataset considering both topics and label. Default=False
+        :param data_sample: int or float that indicates to load only a sample of the original dataset in the file.
+        :param random_state: random seed for generating the sample.
+        :param tokenizer_params: dict of parameters passed to the tokenizer loader
+        """
+
+        self.df = pd.read_csv(
+            kwargs["data_file"],
+            **kwargs["pd_read_kwargs"]
+        )
+        
+        with open(kwargs["prompt_file"], mode="r", encoding="utf-8") as f_:
+            self.prompt_template = f_.read()
+
+        self.text_col = kwargs["text_col"]
+        self.topic_col = kwargs["topic_col"]
+        self.label_col = kwargs["label_col"]
+
+        self.data_sample = float(kwargs.get("data_sample", "1"))
+        self.random_state = int(kwargs.get("random_state", "123"))
+
+        if self.data_sample > 1:
+            self.data_sample = min(self.data_sample, len(self.df)) / len(self.df)
+
+        if self.data_sample != 1:
+            list_stratum = []
+            for tpc in self.df[self.topic_col].unique():
+                tpc_df = self.df.query(f"{self.topic_col} == @tpc")
+                for lbl in self.df[self.label_col].unique():
+                    list_stratum += [tpc_df.query(f"{self.label_col} == @lbl")]
+
+            self.df = pd.concat(
+                objs = [
+                    stratum_df.sample(
+                        frac=self.data_sample,
+                        random_state=self.random_state
+                    ) for stratum_df in list_stratum
+                ]
+            )
+            self.df.reset_index(drop=True, inplace=True)
+        
+        self.tgt2vec, self.vec2tgt, self.tgt_cnt = create_tgt_lookup_tables(self.df[self.label_col])
+        self.df["vec_target"] = [self.convert_lbl_to_vec(tgt, self.tgt2vec) for tgt in self.df[self.label_col]]
+        self.n_labels = len(self.tgt_cnt)
+
+        self.topic2vec, self.vec2topic, self.topic_cnt = create_tgt_lookup_tables(self.df[self.topic_col])
+        self.df["vec_topic"] = [self.convert_lbl_to_vec(tgt, self.topic2vec) for tgt in self.df[self.topic_col]]
+
+        self.sample_weights = bool(int(kwargs.get("sample_weights", "0")))
+        self.weight_dict = (1/self.df[[self.topic_col, self.label_col]].value_counts(normalize=True)).to_dict()
+    
+        self.df["weight"] = 0
+        self.df["prompt"] = ""
+        self.tokenized_input = False
+        self.tokenizer = None
+
+        if kwargs.get("model_type") == "hf_llm":
+            self.tokenized_input = True
+            self.pretrained_model_name = kwargs["pretrained_model_name"]
+
+            self.df["input_ids"] = [[] for _ in range(len(self.df))]
+            self.df["attention_mask"] = [[] for _ in range(len(self.df))]
+            
+            tokenizer_params = kwargs.get("tokenizer_params", {})
+            self.tokenizer = AutoTokenizer.from_pretrained(
+                self.pretrained_model_name,
+                **tokenizer_params
+            )
+
+        start_time = time.time()
+        print(
+            "Processing data to create prompts",
+            f"and tokenize with {self.pretrained_model_name}" \
+                if self.tokenized_input else "",
+            "..."
+        )
+
+        for idx in self.df.index:
+            self.df.at[idx, "weight"] = self.weight_dict[tuple(self.df.loc[idx, [self.topic_col, self.label_col]])]
+
+            current_text = self.df.loc[idx, self.text_col]
+            current_topic = self.df.loc[idx, self.topic_col]
+            self.df.at[idx, "prompt"] = self.prompt_template.replace("{text}", current_text).replace("{topic}", current_topic)
+            
+            if self.tokenized_input:
+                enc_prompt = self.tokenizer(
+                    self.df.loc[idx, "prompt"],
+                    return_tensors="pt",
+                )
+
+                # self.df.loc[idx, "bert_token_text"] = enc_text
+                self.df.at[idx, "input_ids"] = enc_prompt["input_ids"]
+                self.df.at[idx, "attention_mask"] = enc_prompt["attention_mask"]
+        
+        total_time = time.time() - start_time
+        print(f"...finished processing data.")
+        print(f"Total time: {total_time:.2f} sec (~{total_time/len(self.df):.4f} sec/instance)")
+    
+    def __len__(self):
+        return len(self.df)
+    
+    def __getitem__(self, index):
+        return_dict = {
+            "prompt": self.df.loc[index, "prompt"],
+            "label": self.df.loc[index, "vec_target"],
+            "topic_label": self.df.loc[index, "vec_topic"],
+            "index": index,
+        }
+
+        if self.tokenized_input:
+            return_dict["input_ids"]: self.df.loc[index, "input_ids"]
+            return_dict["attention_mask"]: self.df.loc[index, "attention_mask"]
+        
+        if self.sample_weights:
+            return_dict["sample_weight"] = self.df.loc[index, "weight"]
+
+        return return_dict
+    
+    def decode_tokens(self, tokens):
+        if not self.tokenized_input:
+            raise ValueError("There is no tokenizer loaded to decode the ids.")
+        
+        return self.tokenizer.batch_decode(
+            tokens,
+            skip_special_tokens=True,
+            clean_up_tokenization_spaces=True,
+        )
+
     def convert_lbl_to_vec(self, label, lbl2vec=None):
         """
         Convert a target to a vector

@@ -5,8 +5,9 @@ import math
 import time
 import torch
 import pandas as pd
+import os
 
-import datasets, models, input_models, model_utils, loss_fn as lf, JointCL_loss
+import datasets, models, input_models, model_utils, loss_fn as lf, JointCL_loss, llms
 
 SEED = 0
 use_cuda = torch.cuda.is_available()
@@ -20,7 +21,12 @@ def load_config_file(config_file_path):
     return config
 
 def load_data(config, args, data_key="trn"):
-    if 'bert' in config or 'bert' in config['name']:
+    tokenizer_params = {}
+    for k, v in config.items():
+        if k.startswith("hf_tokenizer_"):
+            tokenizer_params[k[13:]] = v
+
+    if 'bert' in config or 'bert' in config['name'] or config.get("model_type", "").lower() == "bert":
         data = datasets.BertStanceDataset(
             data_file = args[f'{data_key}_data'],
             pd_read_kwargs = {},#"engine": "python"},
@@ -37,8 +43,21 @@ def load_data(config, args, data_key="trn"):
             data_sample = float(args.get("train_data_sample", 1.0)) if data_key == "trn" else 1,
             random_state = float(args.get("random_state", 123)),
         )
+    elif config.get("model_type", "").lower() in ["llama_cpp", "hf_llm"]:
+        data = datasets.LLMStanceDataset(
+            data_file = args[f'{data_key}_data'],
+            prompt_file = config["prompt_template_file"],
+            pd_read_kwargs = {},
+            text_col = config["text_col"],
+            topic_col = config["topic_col"],
+            label_col = config["label_col"],
+            pretrained_model_name = config.get("pretrained_model_name"),
+            sample_weights = config.get("sample_weights"),
+            data_sample = float(args.get("train_data_sample", 1.0)) if data_key == "trn" else 1,
+            random_state = float(args.get("random_state", 123)),
+        )
     else:
-        #TODO: Create dataset for non-BERT models
+        #TODO: Create dataset for other types of models
         data = None
 
     return data
@@ -92,7 +111,7 @@ def train(model_handler, num_epochs, early_stopping_patience=0, verbose=True, vl
 
             # update best model checkpoint
             if vld_data is not None:
-                vld_scores, vld_loss = eval_helper(
+                vld_scores, vld_loss, vld_y_pred = eval_helper(
                     model_handler,
                     data_name='VALIDATION',
                     data=vld_data
@@ -117,7 +136,7 @@ def train(model_handler, num_epochs, early_stopping_patience=0, verbose=True, vl
                 model_handler.save_best()
             
             if tst_data is not None:
-                tst_scores, tst_loss = eval_helper(
+                tst_scores, tst_loss, tgt_y_pred = eval_helper(
                     model_handler,
                     data_name='TEST',
                     data=tst_data
@@ -188,7 +207,6 @@ def train_AAD(model_handler, num_epochs, early_stopping_patience=0, verbose=True
         train_step_fn=model_handler.adapt_step,
     )
 
-
 def train_JointCL(model_handler, num_epochs, early_stopping_patience=0, verbose=True, vld_data=None, tst_data=None, train_step_fn=None):
     '''
     Trains the given model using the given data for the specified
@@ -228,7 +246,7 @@ def train_JointCL(model_handler, num_epochs, early_stopping_patience=0, verbose=
 
             # update best model checkpoint
             if vld_data is not None:
-                vld_scores, vld_loss = eval_helper(
+                vld_scores, vld_loss, vld_y_pred = eval_helper(
                     model_handler,
                     data_name='VALIDATION',
                     data=vld_data
@@ -253,7 +271,7 @@ def train_JointCL(model_handler, num_epochs, early_stopping_patience=0, verbose=
                 model_handler.save_best()
             
             if tst_data is not None:
-                tst_scores, tst_loss = eval_helper(
+                tst_scores, tst_loss, tgt_y_pred = eval_helper(
                     model_handler,
                     data_name='TEST',
                     data=tst_data
@@ -287,16 +305,21 @@ def train_JointCL(model_handler, num_epochs, early_stopping_patience=0, verbose=
             data=tst_data
         )
 
-def save_predictions(model_handler, dev_data, dev_dataloader, out_name, config, is_test=False, is_valid=False):#, correct_preds=False):
+def save_predictions(model_handler, dev_data, dev_dataloader, out_name, config, is_test=False, is_valid=False, dev_results=None):#, correct_preds=False):
     # trn_results = model_handler.predict()
     # trn_preds = trn_results[0]
     
-    dev_results = model_handler.predict(data=dev_dataloader)#, correct_preds=correct_preds)
-    # dev_preds = dev_results[0]
-
+    if dev_results is None:
+        dev_results = model_handler.predict(data=dev_dataloader)#, correct_preds=correct_preds)
+        dev_results = dev_results[0]
+        # dev_preds = dev_results[0]
+    
     dev_preds = []
+    dev_proba = []
     if int(config['n_output_classes']) == 2:
-        for pred_val in dev_results[0]:
+        for pred_val in dev_results:
+            dev_proba.append(pred_val)
+
             int_pred = int(pred_val > 0.5)
             vec_pred = (int_pred,)
 
@@ -304,7 +327,9 @@ def save_predictions(model_handler, dev_data, dev_dataloader, out_name, config, 
     else:
         base_vec = [0 for i in range(int(config['n_output_classes']))]
         
-        for pred_val in dev_results[0]:
+        for pred_val in dev_results:
+            dev_proba.append(pred_val)
+            
             int_pred = pred_val.argmax()
             
             vec_pred = base_vec*0
@@ -322,10 +347,14 @@ def save_predictions(model_handler, dev_data, dev_dataloader, out_name, config, 
 
     # predict_helper(trn_preds, model_handler.dataloader).to_csv(out_name + '-train.csv', index=False)
     # print("saved to {}-train.csv".format(out_name))
-    predict_helper(dev_preds, dev_data, config).to_csv(out_name + '-{}.csv'.format(dev_name), index=False)
+    if "/" in out_name:
+        out_folder = "/".join(out_name.split("/")[:-1])
+        os.makedirs(out_folder, exist_ok=True)
+    
+    predict_helper(dev_preds, dev_proba, dev_data, config).to_csv(out_name + '-{}.csv'.format(dev_name), index=False)
     print("saved to {}-{}.csv".format(out_name, dev_name))
 
-def predict_helper(pred_lst, pred_data, config):
+def predict_helper(pred_lst, proba_lst, pred_data, config):
     out_data = []
     cols = [
         config['text_col'],
@@ -336,8 +365,9 @@ def predict_helper(pred_lst, pred_data, config):
         row = pred_data.df.iloc[i]
         temp = [row[c] for c in cols]
         temp.append(pred_lst[i])
+        temp.append(proba_lst[i])
         out_data.append(temp)
-    cols += [config['label_col']+'_pred']
+    cols += [config['label_col']+'_pred', config['label_col']+'_proba']
     return pd.DataFrame(out_data, columns=cols)
 
 def main(args):
@@ -407,6 +437,10 @@ def main(args):
 
     # RUN
     print("Using cuda?: {}".format(use_cuda))
+    hf_model_params = {}
+    for k, v in config.items():
+        if k.startswith("hf_model_"):
+            hf_model_params[k[9:]] = v
 
     if "BiLSTMAttn" in config["name"]:
         text_input_layer = input_models.BertLayer(
@@ -414,6 +448,7 @@ def main(args):
             pretrained_model_name=config.get("bert_pretrained_model", "bert-base-uncased"),
             layers=config.get("bert_layers", "-1"),
             layers_agg_type=config.get("bert_layers_agg", "concat"),
+            loader_params=hf_model_params,
         )
 
         loss_reduction = "none" if bool(int(config.get("sample_weights", "0"))) else "mean"
@@ -467,6 +502,7 @@ def main(args):
             pretrained_model_name=config.get("bert_pretrained_model", "bert-base-uncased"),
             layers=config.get("bert_layers", "-1"),
             layers_agg_type=config.get("bert_layers_agg", "concat"),
+            loader_params=hf_model_params,
         )
 
         topic_input_layer = input_models.BertLayer(
@@ -474,6 +510,7 @@ def main(args):
             pretrained_model_name=config.get("bert_pretrained_model", "bert-base-uncased"),
             layers=config.get("bert_layers", "-1"),
             layers_agg_type=config.get("bert_layers_agg", "concat"),
+            loader_params=hf_model_params,
         )
         
         loss_reduction = "none" if bool(int(config.get("sample_weights", "0"))) else "mean"
@@ -529,6 +566,7 @@ def main(args):
             pretrained_model_name=config.get("bert_pretrained_model", "bert-base-uncased"),
             layers=config.get("bert_layers", "-1"),
             layers_agg_type=config.get("bert_layers_agg", "concat"),
+            loader_params=hf_model_params,
         )
 
         topic_input_layer = input_models.BertLayer(
@@ -536,6 +574,7 @@ def main(args):
             pretrained_model_name=config.get("bert_pretrained_model", "bert-base-uncased"),
             layers=config.get("bert_layers", "-1"),
             layers_agg_type=config.get("bert_layers_agg", "concat"),
+            loader_params=hf_model_params,
         )
         
         loss_reduction = "none" if bool(int(config.get("sample_weights", "0"))) else "mean"
@@ -660,6 +699,7 @@ def main(args):
             pretrained_model_name=config.get("bert_pretrained_model", "bert-base-uncased"),
             layers=config.get("bert_layers", "-1"),
             layers_agg_type=config.get("bert_layers_agg", "concat"),
+            loader_params=hf_model_params,
         )
 
         topic_input_layer = input_models.BertLayer(
@@ -667,6 +707,7 @@ def main(args):
             pretrained_model_name=config.get("bert_pretrained_model", "bert-base-uncased"),
             layers=config.get("bert_layers", "-1"),
             layers_agg_type=config.get("bert_layers_agg", "concat"),
+            loader_params=hf_model_params,
         )
         
         loss_reduction = "none" if bool(int(config.get("sample_weights", "0"))) else "mean"
@@ -719,6 +760,7 @@ def main(args):
             pretrained_model_name=config.get("bert_pretrained_model", "bert-base-uncased"),
             layers=config.get("bert_layers", "-1"),
             layers_agg_type=config.get("bert_layers_agg", "concat"),
+            loader_params=hf_model_params,
         )
 
         topic_input_layer = input_models.BertLayer(
@@ -726,6 +768,7 @@ def main(args):
             pretrained_model_name=config.get("bert_pretrained_model", "bert-base-uncased"),
             layers=config.get("bert_layers", "-1"),
             layers_agg_type=config.get("bert_layers_agg", "concat"),
+            loader_params=hf_model_params,
         )
 
         model = models.TOAD(
@@ -813,23 +856,27 @@ def main(args):
         )
     
     elif 'AAD' in config['name']:
-        train_fn = train_AAD
-        tgt_train_data = load_data(config, args, data_key="tgt_trn")
-        tgt_train_n_batches = math.ceil(len(tgt_train_data) / batch_size)
-        print(f"# of Training instances: {len(tgt_train_data)}. Batch Size={batch_size}. # of batches: {tgt_train_n_batches}")
+        if args["mode"] == "train":
+            train_fn = train_AAD
+            tgt_train_data = load_data(config, args, data_key="tgt_trn")
+            tgt_train_n_batches = math.ceil(len(tgt_train_data) / batch_size)
+            print(f"# of Training instances: {len(tgt_train_data)}. Batch Size={batch_size}. # of batches: {tgt_train_n_batches}")
 
-        tgt_trn_dataloader = torch.utils.data.DataLoader(
-            tgt_train_data,
-            batch_size=int(config['batch_size']),
-            shuffle=True,
-            drop_last=args["drop_last_batch"]
-        )
+            tgt_trn_dataloader = torch.utils.data.DataLoader(
+                tgt_train_data,
+                batch_size=int(config['batch_size']),
+                shuffle=True,
+                drop_last=args["drop_last_batch"]
+            )
+        else:
+            tgt_trn_dataloader = None
 
         src_input_layer = input_models.BertLayer(
             use_cuda=use_cuda,
             pretrained_model_name=config.get("bert_pretrained_model", "bert-base-uncased"),
             layers=config.get("bert_layers", "-1"),
             layers_agg_type=config.get("bert_layers_agg", "concat"),
+            loader_params=hf_model_params,
         )
 
         tgt_input_layer = input_models.BertLayer(
@@ -837,6 +884,7 @@ def main(args):
             pretrained_model_name=config.get("bert_pretrained_model", "bert-base-uncased"),
             layers=config.get("bert_layers", "-1"),
             layers_agg_type=config.get("bert_layers_agg", "concat"),
+            loader_params=hf_model_params,
         )
 
         model = models.AAD(
@@ -917,18 +965,22 @@ def main(args):
         prototype_loss_weight = float(config.get("prototype_loss_weight", "0.2"))
         stance_loss_weight = float(config.get("stance_loss_weight", "1.0"))
 
-        train_loader_prototype = torch.utils.data.DataLoader(
-            train_data,
-            batch_size=int(config['batch_size']),
-            shuffle=True,
-            drop_last=args["drop_last_batch"],
-        )
+        if args["mode"] == "train":
+            train_loader_prototype = torch.utils.data.DataLoader(
+                train_data,
+                batch_size=int(config['batch_size']),
+                shuffle=True,
+                drop_last=args["drop_last_batch"],
+            )
+        else:
+            train_loader_prototype = None
 
         text_input_layer = input_models.BertLayer(
             use_cuda=use_cuda,
             pretrained_model_name=pretrained_model_name,
             layers=layers,
             layers_agg_type=layers_agg_type,
+            loader_params=hf_model_params,
         )
         
         stance_loss_fn = JointCL_loss.Stance_loss(temperature).to(device)
@@ -983,6 +1035,66 @@ def main(args):
             **kwargs
         )
 
+    elif 'llama_cpp' in config['model_type'] or "hf_llm" in config['model_type']:
+        if 'llama_cpp' in config['model_type']:
+            
+            llama_cpp_params = {
+                "model_path": config["pretrained_model_name"],
+            }
+            for k,v in config.items():
+                if k.startswith("llama_cpp_"):
+                    llama_cpp_params[k.replace("llama_cpp_", "")] = v
+            
+            model = llms.LlamaCpp_Model(params=llama_cpp_params)
+
+
+        elif "hf_llm" in config['model_type']:
+            model = llms.HF_Llama_Model(
+                model=config.get("pretrained_model_name", "bigscience/bloom-1b7"),
+                hf_model_params=hf_model_params,
+            )
+        
+        llm_params = {}
+        for k,v in config.items():
+            if k.startswith("llm_"):
+                llm_params[k.replace("llm_", "")] = v
+        
+        if "tst_data" in locals():
+            dataset_ = tst_data
+            dataloader_ = tst_dataloader
+        elif "vld_data" in locals():
+            dataset_ = vld_data
+            dataloader_ = vld_dataloader
+        elif "train_data" in locals():
+            dataset_ = train_data
+            dataloader_ = trn_dataloader
+
+        kwargs = {
+            "model": model,
+            "text_input_model": None,
+            "topic_input_model": None,
+            "is_joint_text_topic": False,
+            "dataloader": dataloader_,
+            "name": config['name'] + args['name'],
+            "loss_function": None,
+            "optimizer": None,
+            #specific params
+            "model_params": llm_params,
+            "dataset": dataset_,
+            "output_format": config["output_format"],
+            # "output_parser": [use specifc function if needed]
+        }
+
+        if "output_max_score" in config:
+            kwargs["output_max_score"] = float(config["output_max_score"])
+
+        model_handler = model_utils.LLMTorchModelHandler(
+            checkpoint_path=config.get('ckp_path', 'data/checkpoints/'),
+            use_cuda=use_cuda,
+            **kwargs
+        )
+
+
     if args["mode"] == 'train':
         # Train model
         start_time = time.time()
@@ -996,26 +1108,39 @@ def main(args):
         )
         print(f"[{config['name']}] total runtime: {(time.time() - start_time)/60:.2f} minutes")
 
-    elif args["mode"] == 'eval':
+    trn_y_pred = None
+    vld_y_pred = None
+    tst_y_pred = None
+    if 'eval' in args["mode"]:
         # Evaluate saved model
-        model_handler.load(filename=args["saved_model_file_name"])
+        if config.get("model_type") not in ["llama_cpp", "hf_llm"]:
+            model_handler.load(filename=args["saved_model_file_name"])
+        
+        if trn_dataloader is not None:
+            trn_scores, trn_loss, trn_y_pred = eval_helper(
+                model_handler,
+                data_name='TRAIN',
+                data=trn_dataloader
+            )
+        
         if vld_dataloader is not None:
-            eval_helper(
+            vld_scores, vld_loss, vld_y_pred = eval_helper(
                 model_handler,
                 data_name='VALIDATION',
                 data=vld_dataloader
             )
 
         if tst_dataloader is not None:
-            eval_helper(
+            tst_scores, tst_loss, tst_y_pred = eval_helper(
                 model_handler,
                 data_name='TEST',
                 data=tst_dataloader
             )
 
-    elif args["mode"] == "predict":
+    if "pred" in args["mode"]:
         # laod saved model and save the predictions
-        model_handler.load(filename=args["saved_model_file_name"])
+        if config.get("model_type") not in ["llama_cpp", "hf_llm"]:
+            model_handler.load(filename=args["saved_model_file_name"])
         
         if trn_dataloader is not None:
             save_predictions(
@@ -1026,6 +1151,7 @@ def main(args):
                 config=config,
                 is_test=False,#('test' in args["trn_data"] or 'tst' in args["trn_data"]),
                 is_valid=False,#('valid' in args["trn_data"] or 'vld' in args["trn_data"]),
+                dev_results=trn_y_pred,
             )
             
         if vld_dataloader is not None:
@@ -1037,6 +1163,7 @@ def main(args):
                 config=config,
                 is_test=False,#('test' in args["vld_data"] or 'tst' in args["vld_data"]),
                 is_valid=True,#('valid' in args["vld_data"] or 'vld' in args["vld_data"]),
+                dev_results=vld_y_pred,
             )
         
         if tst_dataloader is not None:
@@ -1048,6 +1175,7 @@ def main(args):
                 config=config,
                 is_test=True,#('test' in args["tst_data"] or 'tst' in args["tst_data"]),
                 is_valid=False,#('valid' in args["tst_data"] or 'vld' in args["tst_data"]),
+                dev_results=tst_y_pred,
             )
 
 if __name__ == "__main__":
@@ -1126,6 +1254,11 @@ if __name__ == "__main__":
 # train JointCL (Semeval Hold1TopicOut)
 # python train_model.py -m train -c ../../config/Bert_JointCL_example_semeval.txt -t ../../../data/semeval/hold1topic_out/final_dt_train.csv -v ../../../data/semeval/hold1topic_out/final_dt_valid.csv -p ../../../data/semeval/hold1topic_out/final_dt_test.csv -n bo -e 2 -s 1
 
+# predict llama_4bit
+# python train_model.py -m predict -c ../../config/Llama_4bit_example.txt  -p ../../../data/ustancebr/v2/simple_domain/final_bo_test.csv -o ../../out/ustancebr/pred/Llama_4bit_bo_v0
+
+# predict llama_8bit
+# python train_model.py -m predict -c ../../config/Llama_8bit_example.txt  -p ../../../data/ustancebr/v2/simple_domain/final_bo_test.csv -o ../../out/ustancebr/pred/Llama_4bit_bo_v0
 
 ## VM
 # train BiCondBertLstm
@@ -1139,4 +1272,3 @@ if __name__ == "__main__":
 # train BertBiLSTMAttn (Simple Domain)
 # nohup python train_model.py -m train -c ../../config/Bert_BiLstmAttn_example.txt -t ../../data/ustancebr/v2/simple_domain/final_bo_train.csv -v ../../data/ustancebr/v2/simple_domain/final_bo_valid.csv -p ../../data/ustancebr/v2/simple_domain/final_bo_test.csv -n bo -e 5 -s 1 &
 # nohup python train_model.py -m train -c ../../config/Bert_BiLstmAttn_example.txt -t ../../data/ustancebr/v2/simple_domain/final_bo_test.csv -v ../../data/ustancebr/v2/simple_domain/final_bo_test.csv -p ../../data/ustancebr/v2/simple_domain/final_bo_test.csv -n bo -e 5 -s 1 &
-

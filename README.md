@@ -6,13 +6,22 @@ Cross-Target stance detection
 - python==3.7.10
 - numpy==1.19.2
 - matplotlib==3.5.2
-- seaborn==0.11.2
 - pandas==1.2.4
+- seaborn==0.11.2
 - tqdm==4.59.0
 - scikit-learn==0.24.2
-- pytorch==1.9.0 (Cuda 10.2)
-- transformers==4.7.0
-- faiss-gpu==1.7.1 (conda install -c conda-forge faiss-gpu==1.7.1)
+- pytorch==1.13.1 (Cuda 11.7)
+- transformers==4.28.0
+
+- faiss-gpu==1.7.1 (conda install -c conda-forge faiss-gpu==1.7.1) - only for JointCL
+
+- transformers==4.28.0 - only for llm
+- sentencepiece==0.1.98 - only for llm
+- accelerate==0.18.0 - only for llm
+- bitsandbytes==0.38.1 - only for llm
+- protobuf==3.20.0 - only for llm
+
+- llama-cpp-python==0.1.48 - only for llama_cpp
 
 # Training a model:
 

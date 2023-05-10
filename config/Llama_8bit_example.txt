@@ -1,0 +1,17 @@
+name:Llama_8bit_ustancebr_
+model_type:hf_llm
+pretrained_model_name:pablocosta/llama-7b
+prompt_template_file:../../data/ustancebr/prompts/stance_prompt_alpaca_score10_0.md
+hf_model_load_in_8bit:True
+hf_model_use_auth_token:
+hf_tokenizer_use_auth_token:
+text_col:Text
+topic_col:Target
+label_col:Polarity
+sample_weights:1
+batch_size:32
+n_output_classes:2
+ckp_path:../../checkpoints/ustancebr/V0/
+epochs:1
+output_format:score
+output_max_score:10

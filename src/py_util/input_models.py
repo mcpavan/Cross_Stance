@@ -5,11 +5,11 @@ from transformers import BertModel
 # B: batch size
 # T: max sequence length
 # E: word embedding size
-def get_BERT_Model(name=None):
+def get_BERT_Model(name=None, loader_params={}):
     if not name:
         name = 'bert-base-uncased'
     
-    return BertModel.from_pretrained(name)
+    return BertModel.from_pretrained(name, **loader_params)
 
 class BasicWordEmbedLayer(torch.nn.Module):
     def __init__(self, vecs, static_embeds=True, use_cuda=False):
@@ -28,12 +28,12 @@ class BasicWordEmbedLayer(torch.nn.Module):
 
 class BertLayer(torch.nn.Module):
 
-    def __init__(self, use_cuda=False, pretrained_model_name=None, layers=None, layers_agg_type=None):
+    def __init__(self, use_cuda=False, pretrained_model_name=None, layers=None, layers_agg_type=None, loader_params={}):
         super(BertLayer, self).__init__()
 
         self.use_cuda = use_cuda
         self.static_embeds = True
-        self.bert_layer = get_BERT_Model(name=pretrained_model_name)
+        self.bert_layer = get_BERT_Model(name=pretrained_model_name, loader_params=loader_params)
         self.layers = layers or "-1"
         self.layers_agg_type = layers_agg_type or "concat"
         
