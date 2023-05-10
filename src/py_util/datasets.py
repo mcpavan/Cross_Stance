@@ -379,9 +379,12 @@ class LLMStanceDataset(Dataset):
                     return_tensors="pt",
                 )
 
-                # self.df.loc[idx, "bert_token_text"] = enc_text
-                self.df.at[idx, "input_ids"] = enc_prompt["input_ids"]
-                self.df.at[idx, "attention_mask"] = enc_prompt["attention_mask"]
+                if isinstance(enc_prompt, dict):
+                    # self.df.loc[idx, "bert_token_text"] = enc_text
+                    for k, v in enc_prompt.items():
+                        self.df.at[idx, k] = enc_prompt[k]
+                else:
+                    self.df.at[idx, "input_ids"] = enc_prompt
         
         total_time = time.time() - start_time
         print(f"...finished processing data.")
