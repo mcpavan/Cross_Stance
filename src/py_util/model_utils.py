@@ -1141,8 +1141,10 @@ class LLMTorchModelHandler(TorchModelHandler):
 
                 all_y_pred += [parsed_out]
         
-        with open(f"./llama_cpp_errors/{self.name}", mode="r", encoding="utf-8") as f_:
-            print(errors_, f_)
+        if len(errors_) > 0:
+            os.makedirs("./llama_cpp_errors/", exist_ok=True)
+            with open(f"./llama_cpp_errors/{self.name}.err", mode="r", encoding="utf-8") as f_:
+                print(errors_, f_)
 
         return np.array(all_y_pred), np.array(all_labels), None
     

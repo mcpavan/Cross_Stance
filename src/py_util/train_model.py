@@ -400,7 +400,7 @@ def main(args):
     # LOAD DATA #
     #############
     # load training data
-    batch_size = int(config['batch_size'])
+    batch_size = int(config['batch_size']) if not is_llm else 1
     train_fn = train
     if args['trn_data'] is not None:
         train_data = load_data(config, args, data_key="trn")
@@ -409,7 +409,7 @@ def main(args):
 
         trn_dataloader = torch.utils.data.DataLoader(
             train_data,
-            batch_size=int(config['batch_size']),
+            batch_size=batch_size,
             shuffle=True,
             drop_last=args["drop_last_batch"],
             collate_fn = llm_collate_fn if is_llm else None,
@@ -427,7 +427,7 @@ def main(args):
 
         vld_dataloader = torch.utils.data.DataLoader(
             vld_data,
-            batch_size=int(config['batch_size']),
+            batch_size=batch_size,
             shuffle=False,
             drop_last=args["drop_last_batch"],
             collate_fn = llm_collate_fn if is_llm else None,
@@ -443,7 +443,7 @@ def main(args):
 
         tst_dataloader = torch.utils.data.DataLoader(
             tst_data,
-            batch_size=int(config['batch_size']),
+            batch_size=batch_size,
             shuffle=False,
             drop_last=args["drop_last_batch"],
             collate_fn = llm_collate_fn if is_llm else None,
@@ -883,7 +883,7 @@ def main(args):
 
             tgt_trn_dataloader = torch.utils.data.DataLoader(
                 tgt_train_data,
-                batch_size=int(config['batch_size']),
+                batch_size=batch_size,
                 shuffle=True,
                 drop_last=args["drop_last_batch"]
             )
@@ -969,8 +969,6 @@ def main(args):
         layers=config.get("bert_layers", "-1")
         layers_agg_type=config.get("bert_layers_agg", "concat")
 
-        batch_size = int(config['batch_size'])
-
         device = torch.device('cuda' if use_cuda else 'cpu')
         temperature = float(config.get("temperature", "0.07"))
         dp = float(config.get("dp", "0.1"))
@@ -987,7 +985,7 @@ def main(args):
         if args["mode"] == "train":
             train_loader_prototype = torch.utils.data.DataLoader(
                 train_data,
-                batch_size=int(config['batch_size']),
+                batch_size=batch_size,
                 shuffle=True,
                 drop_last=args["drop_last_batch"],
             )
