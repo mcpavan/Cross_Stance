@@ -32,9 +32,14 @@ class BertStanceDataset(Dataset):
         :param tokenizer_params: dict of parameters passed to the tokenizer loader
         """
 
+        skip_rows = kwargs.get("skip_rows")
+        if skip_rows is not None:
+            skip_rows = list(range(1, int(skip_rows)))
+
         self.df = pd.read_csv(
             kwargs["data_file"],
-            **kwargs["pd_read_kwargs"]
+            **kwargs["pd_read_kwargs"],
+            skiprows=skip_rows
         )
 
         self.text_col = kwargs["text_col"]
@@ -250,7 +255,7 @@ class BertStanceDataset(Dataset):
         if not lbl2vec:
             lbl2vec = self.tgt2vec
         assert isinstance(label, str), "Target is not String"
-        return lbl2vec.get(label)
+        return lbl2vec.get(label.lower())
 
     def convert_vec_to_lbl(self, vec, vec2lbl=None):
         """
@@ -296,9 +301,14 @@ class LLMStanceDataset(Dataset):
         :param tokenizer_params: dict of parameters passed to the tokenizer loader
         """
 
+        skip_rows = kwargs.get("skip_rows")
+        if skip_rows is not None:
+            skip_rows = list(range(1, int(skip_rows)))
+
         self.df = pd.read_csv(
             kwargs["data_file"],
-            **kwargs["pd_read_kwargs"]
+            **kwargs["pd_read_kwargs"],
+            skiprows=skip_rows
         )
         
         with open(kwargs["prompt_file"], mode="r", encoding="utf-8") as f_:
@@ -429,7 +439,7 @@ class LLMStanceDataset(Dataset):
         if not lbl2vec:
             lbl2vec = self.tgt2vec
         assert isinstance(label, str), "Target is not String"
-        return lbl2vec.get(label)
+        return lbl2vec.get(label.lower())
 
     def convert_vec_to_lbl(self, vec, vec2lbl=None):
         """
@@ -457,7 +467,7 @@ def create_tgt_lookup_tables(targets):
     :param text: List of targets for each instance
     :return: A tuple of dicts (tgt2vec, vec2tgt, tgt_cnt)
     """
-    tgt_cnt = Counter(targets)
+    tgt_cnt = Counter([t.lower() for t in targets])
     sort_voc = sorted(tgt_cnt, key=tgt_cnt.get, reverse=True)
     vec2tgt = {}
     tgt2vec = {}

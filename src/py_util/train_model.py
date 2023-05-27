@@ -5,6 +5,7 @@ import math
 import time
 import torch
 import pandas as pd
+import json
 import os
 
 import datasets, models, input_models, model_utils, loss_fn as lf, JointCL_loss, llms
@@ -43,6 +44,7 @@ def load_data(config, args, data_key="trn"):
             data_sample = float(args.get("train_data_sample", 1.0)) if data_key == "trn" else 1,
             random_state = float(args.get("random_state", 123)),
             tokenizer_params = tokenizer_params,
+            skip_rows = args.get(f"skip_rows_{data_key}"),
         )
     elif config.get("model_type", "").lower() in ["llama_cpp", "hf_llm"]:
         data = datasets.LLMStanceDataset(
@@ -58,6 +60,7 @@ def load_data(config, args, data_key="trn"):
             random_state = float(args.get("random_state", 123)),
             model_type = config.get("model_type", "").lower(),
             tokenizer_params = tokenizer_params,
+            skip_rows = args.get(f"skip_rows_{data_key}"),
         )
     else:
         #TODO: Create dataset for other types of models
@@ -65,7 +68,7 @@ def load_data(config, args, data_key="trn"):
 
     return data
 
-def eval_helper(model_handler, data_name, data=None):
+def eval_helper(model_handler, data_name, data=None, y_pred=None):
     '''
     Helper function for evaluating the model during training.
     Can evaluate on all the data or just a subset of corpora.
@@ -73,7 +76,7 @@ def eval_helper(model_handler, data_name, data=None):
     :return: the scores from running on all the data
     '''
     # eval on full corpus
-    return model_handler.eval_and_print(data=data, data_name=data_name) #(score, avg_loss)
+    return model_handler.eval_and_print(data=data, data_name=data_name, y_pred=y_pred) #(score, avg_loss)
 
 def train(model_handler, num_epochs, early_stopping_patience=0, verbose=True, vld_data=None, tst_data=None, train_step_fn=None):
     '''
@@ -395,6 +398,7 @@ def main(args):
     ####################
     config = load_config_file(args['config_file'])
     is_llm = config.get("model_type","").lower() in ["llama_cpp", "hf_llm"]
+    is_hfllm = config.get("model_type","").lower() == "hf_llm"
 
     #############
     # LOAD DATA #
@@ -412,7 +416,7 @@ def main(args):
             batch_size=batch_size,
             shuffle=True,
             drop_last=args["drop_last_batch"],
-            collate_fn = llm_collate_fn if is_llm else None,
+            collate_fn = llm_collate_fn if is_hfllm else None,
         )
     else:
         if args["mode"] == "train":
@@ -430,7 +434,7 @@ def main(args):
             batch_size=batch_size,
             shuffle=False,
             drop_last=args["drop_last_batch"],
-            collate_fn = llm_collate_fn if is_llm else None,
+            collate_fn = llm_collate_fn if is_hfllm else None,
         )
     else:
         vld_dataloader = None
@@ -446,7 +450,7 @@ def main(args):
             batch_size=batch_size,
             shuffle=False,
             drop_last=args["drop_last_batch"],
-            collate_fn = llm_collate_fn if is_llm else None,
+            collate_fn = llm_collate_fn if is_hfllm else None,
         )
     else:
         tst_dataloader = None
@@ -1062,13 +1066,17 @@ def main(args):
                 if k.startswith("llama_cpp_"):
                     llama_cpp_params[k.replace("llama_cpp_", "")] = v
             
-            model = llms.LlamaCpp_Model(params=llama_cpp_params)
+            model = llms.LlamaCpp_Model(
+                params=llama_cpp_params,
+                num_labels=nl
+            )
 
 
         elif "hf_llm" in config['model_type']:
             model = llms.HF_Llama_Model(
                 model=config.get("pretrained_model_name", "bigscience/bloom-1b7"),
                 hf_model_params=hf_model_params,
+                num_labels=nl,
             )
         
         llm_params = {}
@@ -1099,6 +1107,9 @@ def main(args):
             "model_params": llm_params,
             "dataset": dataset_,
             "output_format": config["output_format"],
+            "save_every_n_batches": config.get("save_every_n_batches", "2"),
+            "output_err_default": config.get("output_err_default", "0"),
+            "output_class_order": config.get("output_class_order", None),
             # "output_parser": [use specifc function if needed]
         }
 
@@ -1106,7 +1117,7 @@ def main(args):
             kwargs["output_max_score"] = float(config["output_max_score"])
 
         model_handler = model_utils.LLMTorchModelHandler(
-            checkpoint_path=config.get('ckp_path', 'data/checkpoints/'),
+            checkpoint_path = args.get('out_path') or config.get('ckp_path', 'data/checkpoints/'),
             use_cuda=use_cuda,
             **kwargs
         )
@@ -1126,8 +1137,20 @@ def main(args):
         print(f"[{config['name']}] total runtime: {(time.time() - start_time)/60:.2f} minutes")
 
     trn_y_pred = None
+    if args["trn_results"] != "":
+        with open(args["trn_results"], mode="r", encoding="utf-8") as f_:
+            trn_y_pred = json.load(f_)["pred"]
+
     vld_y_pred = None
+    if args["vld_results"] != "":
+        with open(args["vld_results"], mode="r", encoding="utf-8") as f_:
+            vld_y_pred = json.load(f_)["pred"]
+
     tst_y_pred = None
+    if args["tst_results"] != "":
+        with open(args["tst_results"], mode="r", encoding="utf-8") as f_:
+            tst_y_pred = json.load(f_)["pred"]
+    
     if 'eval' in args["mode"]:
         # Evaluate saved model
         if config.get("model_type") not in ["llama_cpp", "hf_llm"]:
@@ -1137,24 +1160,29 @@ def main(args):
             trn_scores, trn_loss, trn_y_pred = eval_helper(
                 model_handler,
                 data_name='TRAIN',
-                data=trn_dataloader
+                data=trn_dataloader,
+                y_pred=trn_y_pred,
             )
         
         if vld_dataloader is not None:
             vld_scores, vld_loss, vld_y_pred = eval_helper(
                 model_handler,
                 data_name='VALIDATION',
-                data=vld_dataloader
+                data=vld_dataloader,
+                y_pred=vld_y_pred,
             )
 
         if tst_dataloader is not None:
             tst_scores, tst_loss, tst_y_pred = eval_helper(
                 model_handler,
                 data_name='TEST',
-                data=tst_dataloader
+                data=tst_dataloader,
+                y_pred=tst_y_pred,
             )
 
     if "pred" in args["mode"]:
+        out_path = args.get("out_path", "./pred")
+        print("Output Path:", out_path)
         # laod saved model and save the predictions
         if config.get("model_type") not in ["llama_cpp", "hf_llm"]:
             model_handler.load(filename=args["saved_model_file_name"])
@@ -1164,7 +1192,7 @@ def main(args):
                 model_handler=model_handler,
                 dev_data=train_data,
                 dev_dataloader=trn_dataloader,
-                out_name=args["out_path"],
+                out_name=out_path,
                 config=config,
                 is_test=False,#('test' in args["trn_data"] or 'tst' in args["trn_data"]),
                 is_valid=False,#('valid' in args["trn_data"] or 'vld' in args["trn_data"]),
@@ -1176,7 +1204,7 @@ def main(args):
                 model_handler=model_handler,
                 dev_data=vld_data,
                 dev_dataloader=vld_dataloader,
-                out_name=args["out_path"],
+                out_name=out_path,
                 config=config,
                 is_test=False,#('test' in args["vld_data"] or 'tst' in args["vld_data"]),
                 is_valid=True,#('valid' in args["vld_data"] or 'vld' in args["vld_data"]),
@@ -1188,7 +1216,7 @@ def main(args):
                 model_handler=model_handler,
                 dev_data=tst_data,
                 dev_dataloader=tst_dataloader,
-                out_name=args["out_path"],
+                out_name=out_path,
                 config=config,
                 is_test=True,#('test' in args["tst_data"] or 'tst' in args["tst_data"]),
                 is_valid=False,#('valid' in args["tst_data"] or 'vld' in args["tst_data"]),
@@ -1209,10 +1237,17 @@ if __name__ == "__main__":
     # parser.add_argument('-k', '--score_key', dest="score_key", help='Score to use for optimization', required=False, default='f_macro')
     parser.add_argument('-s', '--save_ckp', dest="save_ckp", help='Whether to save checkpoints', required=False, default=0, type=int)
     parser.add_argument('-f', '--saved_model_file_name', dest="saved_model_file_name", required=False, default=None)
-    parser.add_argument('-o', '--out_path', dest="out_path", help='Ouput file name', default='./pred')
+    parser.add_argument('-o', '--out_path', dest="out_path", help='Ouput file name', default=None)
     parser.add_argument('-d', '--drop_last_batch', type=bool, dest="drop_last_batch", help="Whether to drop the last batch or not", default=False)
     parser.add_argument('-a', '--train_data_sample', type=float, dest="train_data_sample", help="Value to sample the train data.", default=1.0)
     parser.add_argument('-r', '--random_state', type=int, dest="train_data_sample", help="Random state seed to sample the train data.", default=123)
+    parser.add_argument('-k', '--skip_rows_trn', type=int, dest="skip_rows_trn", help="Skip rows in train data.", default=0)
+    parser.add_argument('-j', '--skip_rows_vld', type=int, dest="skip_rows_vld", help="Skip rows in validation data.", default=0)
+    parser.add_argument('-l', '--skip_rows_tst', type=int, dest="skip_rows_tst", help="Skip rows in test data.", default=0)
+    parser.add_argument('-u', '--tst_results', type=str, dest="tst_results", help="Path to file containing the test results. (predictions)", default="")
+    parser.add_argument('-w', '--vld_results', type=str, dest="vld_results", help="Path to file containing the validation results. (predictions)", default="")
+    parser.add_argument('-x', '--trn_results', type=str, dest="trn_results", help="Path to file containing the train results. (predictions)", default="")
+
     args = vars(parser.parse_args())
 
     main(args)
@@ -1272,7 +1307,10 @@ if __name__ == "__main__":
 # python train_model.py -m train -c ../../config/Bert_JointCL_example_semeval.txt -t ../../../data/semeval/hold1topic_out/final_dt_train.csv -v ../../../data/semeval/hold1topic_out/final_dt_valid.csv -p ../../../data/semeval/hold1topic_out/final_dt_test.csv -n bo -e 2 -s 1
 
 # predict llama_4bit
-# python train_model.py -m predict -c ../../config/Llama_4bit_example.txt  -p ../../../data/ustancebr/v2/simple_domain/final_bo_test.csv -o ../../out/ustancebr/pred/Llama_4bit_bo_v0
+# python train_model.py -m predict -c ../../config/Llama_4bit_example.txt  -p ../../../data/ustancebr/v2/simple_domain/final_bo_test.csv -o ../../out/ustancebr/pred/zero_shot/Llama_4bit_bo_v0
+# python train_model.py -m predict -c ../../config/Llama_4bit_example.txt  -p ../../../data/ustancebr/v2/simple_domain/final_bo_test.csv -o ../../out/ustancebr/pred/zero_shot/Llama_4bit_bo_v0 -l 2300
+# python train_model.py -m predict -c ../../config/Llama_4bit_example.txt  -p ../../../data/ustancebr/v2/simple_domain/final_bo_test.csv -o ../../out/ustancebr/pred/zero_shot/Llama_4bit_bo_v0 -u ../../out/ustancebr/pred/zero_shot/Llama_4bit_bo_v0/llama_cpp_pred_checkpoints/Llama_4bit_ustancebr_full.ckp
+# python train_model.py -m eval  -c ../../config/Llama_4bit_example.txt  -p ../../../data/ustancebr/v2/simple_domain/final_bo_test.csv -o ../../out/ustancebr/pred/zero_shot/Llama_4bit_bo_v0 -u ../../out/ustancebr/pred/zero_shot/Llama_4bit_bo_v0/llama_cpp_pred_checkpoints/Llama_4bit_ustancebr_full.ckp
 
 # predict llama_8bit
 # python train_model.py -m predict -c ../../config/Llama_8bit_example.txt  -p ../../../data/ustancebr/v2/simple_domain/final_bo_test.csv -o ../../out/ustancebr/pred/Llama_4bit_bo_v0

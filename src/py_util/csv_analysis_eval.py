@@ -5,9 +5,10 @@ from train_model import load_config_file
 
 show_img = False
 save_plots = False
-bert_model_name_map = {
+pretrained_model_name_map = {
     "neuralmind/bert-base-portuguese-cased": "BERTimbau",
     "pablocosta/bertabaporu-base-uncased": "BERTabaporu",
+    "../../data/LLMs/ggml-alpaca-7b-q4.bin": "Alpaca-4bit",
 }
 
 config_base_path = "../../config"
@@ -21,13 +22,13 @@ grp_cols_source = [
     "config_file_name",
     "source_topic",
     "destination_topic",
-    "bert",
+    "pretrained_model",
 ]
 grp_cols_dest = [
     "data_folder",
     "config_file_name",
     "destination_topic",
-    "bert",
+    "pretrained_model",
 ]
 out_metrics = [
     "test_fmacro",
@@ -40,7 +41,7 @@ def get_max_value_row(df, max_var):
 
     return df.loc[idx]
 
-def get_bert_model_name(info):
+def get_pretrained_model_name(info):
     data_folder = info["data_folder"]
     config_file_name = info["config_file_name"]
     version = info["version"]
@@ -49,13 +50,18 @@ def get_bert_model_name(info):
 
     config_dict = load_config_file(config_file_path=config_file_path)
     model_name = "-"
+
     if "bert" in config_dict or "bert" in config_dict["name"]:
         model_name = config_dict.get("bert_pretrained_model", "bert-base-uncased")
 
-    return bert_model_name_map.get(model_name, model_name)
+    if "pretrained_model_name" in config_dict:
+        model_name = config_dict.get("pretrained_model_name", "bert-base-uncased")
+
+    return pretrained_model_name_map.get(model_name, model_name)
 
 df = pd.read_csv(eval_file_path)
-df["bert"] = df.apply(get_bert_model_name, axis=1)
+df["pretrained_model"] = df.apply(get_pretrained_model_name, axis=1)
+df["valid_fmacro"] = df["valid_fmacro"].fillna(0)
 
 best_valid = df.groupby(grp_cols_source) \
                .apply(lambda x: get_max_value_row(x, "valid_fmacro")) \
@@ -70,7 +76,7 @@ if save_plots:
         data=sd_df,
         y="destination_topic",
         x="test_fmacro",
-        hue="bert",
+        hue="pretrained_model",
         order=["bo", "lu", "co", "cl", "gl", "ig"],
         linewidth=.5,
         saturation=1,
@@ -96,7 +102,7 @@ if save_plots:
         data=df.query(predefined_pairs),
         y="destination_topic",
         x="test_fmacro",
-        hue="bert",
+        hue="pretrained_model",
         order=["bo", "lu", "co", "cl", "gl", "ig"],
         linewidth=.5,
         saturation=1,
@@ -116,7 +122,7 @@ if save_plots:
         data=h1to_df,
         y="destination_topic",
         x="test_fmacro",
-        hue="bert",
+        hue="pretrained_model",
         order=["bo", "lu", "co", "cl", "gl", "ig"],
         linewidth=.5,
         saturation=1,

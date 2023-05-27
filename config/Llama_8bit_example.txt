@@ -15,3 +15,4 @@ ckp_path:../../checkpoints/ustancebr/V0/
 epochs:1
 output_format:score
 output_max_score:10
+output_err_default:0.0

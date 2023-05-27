@@ -71,7 +71,7 @@ for eval_file_path in tqdm(glob(f"{eval_base_path}/**/*.txt", recursive=True)):
             eval_results_dict[key] += [None]        
 
 df_results = pd.DataFrame(eval_results_dict)
-df_results.dropna().to_csv(out_path, index=False)
+df_results.dropna(how="all").to_csv(out_path, index=False)
 
 
 errors_out_cols = [

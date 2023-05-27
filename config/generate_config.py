@@ -1,20 +1,20 @@
 from itertools import product
 import os
 
-first_v_config = 101
-folder = "hold1topic_out" # "simple_domain" or "hold1topic_out"
+first_v_config = 1
+folder = "simple_domain" # "simple_domain" or "hold1topic_out"
 # model_name_out_file = "BertBiLSTMAttn" # BertBiLSTMAttn or BertBiLSTMJointAttn
 # batch_size = 32
 modelname2example = {
     "BertAAD": "./Bert_AAD_example.txt",
     "BiCondBertLstm": "./Bert_BiCondLstm_example.txt",
-    "BertBiLSTMAttn": "./Bert_BiLstmAttn_example.txt",
+    # "BertBiLSTMAttn": "./Bert_BiLstmAttn_example.txt",
     "BertBiLSTMJointAttn": "./Bert_BiLstmJointAttn_example.txt",
     "BertCrossNet": "./Bert_CrossNet_example.txt",
     "BertJointCL": "./Bert_JointCL_example.txt",
     "BertTOAD": "./Bert_TOAD_example.txt",
-    "Llama_4bit": "./Llama_4bit_example.txt",
-    "Llama_8bit": "./Llama_8bit_example.txt",
+    # "Llama_4bit": "./Llama_4bit_example.txt",
+    # "Llama_8bit": "./Llama_8bit_example.txt",
 }
 
 
@@ -249,7 +249,7 @@ def load_config_file(config_file_path):
 
 
 out_path = "./{folder}/{model_name_out_file}_v{k}.txt"
-ckp_path = "../../checkpoints/ustancebr/{name}/V{k}/"
+ckp_path = "../../checkpoints/ustancebr/{folder}/{name}/V{k}/"
 for model_name_out_file, example_file in modelname2example.items():
     os.makedirs("/".join(out_path.split("/")[:-1]).replace("{folder}", folder), exist_ok=True)
 
@@ -280,11 +280,12 @@ for model_name_out_file, example_file in modelname2example.items():
                 new_config_dict[key] = value
         
         new_config_dict["ckp_path"] = ckp_path \
+            .replace("{folder}", folder) \
             .replace(
                 "{name}",
                 model_name_out_file.lower().replace("bert", ""),
             ) \
-            .replace("{k}", str(k))
+            .replace("{k}", str(k))             
         current_out_path = out_path \
             .replace("{folder}", folder) \
             .replace("{model_name_out_file}", model_name_out_file) \

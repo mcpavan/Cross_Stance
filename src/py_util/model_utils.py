@@ -1,7 +1,8 @@
-import torch, time, numpy as np
+import torch, time, math, numpy as np
 from sklearn.metrics import f1_score, precision_score, recall_score
 from tqdm import tqdm
 import os
+import json
 
 class TorchModelHandler:
     '''
@@ -162,7 +163,8 @@ class TorchModelHandler:
         :param score_dict: the dictionary used to store the scores.
         '''
         if self.output_dim == 1:
-            vals = score_fn(true_labels, (pred_labels>0.5)*1, average=None, labels=range(self.num_labels))
+            vals = score_fn(true_labels, np.floor(pred_labels*self.num_labels), average=None, labels=range(self.num_labels))
+            # vals = score_fn(true_labels, (pred_labels>0.5)*1, average=None, labels=range(self.num_labels))
         else:
             if len(true_labels.shape) > 1 and true_labels.shape[-1] != 1:
                 true_labels_ = np.argmax(true_labels, axis=1)
@@ -185,16 +187,36 @@ class TorchModelHandler:
         
         return score_dict
 
-    def eval_model(self, data=None):
+    def eval_model(self, data=None, y_pred=None):
         '''
         Evaluates this model on the given data. Stores computed
         scores in the field "score_dict". Currently computes macro-averaged
         F1 scores, precision and recall. Can also compute scores on a class-wise basis.
         '''
-        y_pred, labels, loss = self.predict(data)
+
+        if y_pred is not None:
+            y_pred = np.reshape(a=y_pred, newshape=(-1,1))
+            labels = self.get_labels(data=data)
+            loss = 0
+        else:
+            y_pred, labels, loss = self.predict(data)
+
         score_dict = self.score(y_pred, labels)
 
         return score_dict, loss, y_pred
+
+    def get_labels(self, data=None):
+        if data is None:
+            data = self.dataloader
+        
+        all_labels = torch.tensor([], device="cpu")
+        for batch_n, batch_data in tqdm(enumerate(data)):
+            label_tensor = torch.stack(batch_data["label"]).T.type(torch.FloatTensor)
+            if len(label_tensor.shape) > 1 and label_tensor.shape[-1] != 1:
+                label_tensor = label_tensor.argmax(dim=1).reshape(-1,1)
+            
+            all_labels = torch.cat((all_labels, label_tensor))
+        return all_labels.numpy()
 
     def predict(self, data=None):
         self.model.eval()
@@ -256,7 +278,7 @@ class TorchModelHandler:
         avg_loss = partial_loss / batch_n #loss per batch
         return all_y_pred.numpy(), all_labels.numpy(), avg_loss#partial_loss
     
-    def eval_and_print(self, data=None, data_name=None):
+    def eval_and_print(self, data=None, data_name=None, y_pred=None):
         '''
         Evaluates this model on the given data. Stores computed
         scores in the field "score_dict". Currently computes macro-averaged.
@@ -270,7 +292,7 @@ class TorchModelHandler:
         :return: a map from score names to values
         '''
         # Passing data_name to eval_model as evaluation of adv model on train and dev are different
-        scores, loss, y_pred = self.eval_model(data=data)
+        scores, loss, y_pred = self.eval_model(data=data, y_pred=y_pred)
         print("Evaluating on \"{}\" data".format(data_name))
         for metric_name, metric_dict in scores.items():
             for class_name, metric_val in metric_dict.items():
@@ -1065,20 +1087,31 @@ class LLMTorchModelHandler(TorchModelHandler):
         self.tokenizer = self.dataset.tokenizer
         self.tokenized_input = self.tokenizer is None
         self.output_format = params["output_format"]
-        self.output_dim = self.num_labels
-        self.output_max_score = params.get("öutput_max_score", 10)
+        self.output_max_score = int(params.get("output_max_score", "10"))
         self.output_parser = params.get("output_parser", self._output_parser_fn)
+        self.save_every_n_batches = int(params.get("save_every_n_batches", "0"))
+        self.output_err_default = params.get("output_err_default", "0.0")
         
+        if self.output_format == "score":
+            self.output_err_default = float(self.output_err_default)
+        
+        self.output_class_order = params.get("output_class_order")
+        self.output_class_map = None
+        if self.output_class_order is not None:
+            self.output_class_order = self.output_class_order.split(",")
+            self.output_class_map = [self.dataset.tgt2vec[k] for k in self.output_class_order]
+
     def _output_parser_fn(self, output):
         output = output.strip().lower()
-        
+
         try:
             if self.output_format == "set":
                 possible_values = '|'.join(self.dataset.tgt2vec.keys())
                 set_regex = re.search(f"({possible_values})", output)
 
-                prediction = output[set_regex.start():set_regex.end()]
+                prediction = output[set_regex.start():set_regex.end()].lower()
                 prediction = self.dataset.convert_lbl_to_vec(prediction, self.dataset.tgt2vec)
+                prediction = (np.argmax(prediction)+0.5)/self.num_labels
             
             elif self.output_format == "score":
                 score_regex = re.search("([0-9]+)(/[0-9]+)*", output)
@@ -1089,7 +1122,16 @@ class LLMTorchModelHandler(TorchModelHandler):
                     prediction = float(prediction[0])/float(prediction[1])
                 else:
                     prediction = float(prediction)/self.output_max_score
-        except:
+                
+                if self.output_class_map is not None:
+                    # convert float back to integer (up to num_labels)
+                    prediction = math.floor(prediction*self.num_labels)
+                    # convert int to vec (consistent with dataset)
+                    prediction = self.output_class_map[prediction]
+                    # convert vec to new int (order in dataset)
+                    prediction = (np.argmax(prediction)+0.5)/self.num_labels
+
+        except Exception as ex:
             prediction = None
 
         return prediction
@@ -1097,6 +1139,7 @@ class LLMTorchModelHandler(TorchModelHandler):
     def predict(self, data=None):
         all_y_pred = []
         all_labels = []
+        all_indices = []
         errors_ = []
         if data is None:
             data = self.dataloader
@@ -1108,13 +1151,13 @@ class LLMTorchModelHandler(TorchModelHandler):
             label_tensor = label_tensor.squeeze(-1).numpy()
                 
             all_labels += label_tensor.tolist()
-            
+            all_indices += batch_data["index"]
+
             if self.model.model_type == "llama_cpp":
                 prompt_list = batch_data["prompt"]
 
                 str_output_tensor = []
                 for prompt_ in prompt_list:
-                    # print(prompt_)
                     str_output_tensor += [
                         self.model(
                             prompt = prompt_,
@@ -1122,29 +1165,47 @@ class LLMTorchModelHandler(TorchModelHandler):
                         )
                     ]
                     
-                    # print(str_output)
-                    # all_y_pred += [self.output_parser(str_output)]
-                
             elif self.model.model_type == "hugging_face":
-                output_tensor = self.model(
-                    prompt_ids = batch_data["input_ids"],
-                    params = self.model_params,
-                )
 
-                str_output_tensor = self.dataset.decode_tokens(output_tensor)
+                str_output_tensor = []
+                for prompt_ids in prompt_list:
+                    output_tensor = self.model(
+                        prompt_ids = prompt_ids,
+                        params = self.model_params,
+                    )
 
-            for i, str_output in enumerate(str_output_tensor):
+                    str_output_tensor += [self.dataset.decode_tokens(output_tensor)]
+
+            for idx, str_output in zip(batch_data["index"], str_output_tensor):
                 parsed_out = self.output_parser(str_output)
                 if parsed_out is None:
-                    parsed_out = self.dataset.tgt2vec.most_common(1)[0][0]
-                    errors_ += [(prompt_, str_output)]
+                    parsed_out = self.output_err_default
+                    errors_ += [(float(idx), prompt_, str_output)]
 
                 all_y_pred += [parsed_out]
+
+            if self.save_every_n_batches and batch_n % self.save_every_n_batches == 0:
+                out_dict = {
+                    "pred": np.array(all_y_pred).tolist(),
+                    "index": np.array(all_indices).tolist(),
+                }
+                os.makedirs(f"{self.checkpoint_path}/llama_cpp_pred_checkpoints/", exist_ok=True)
+                with open(f"{self.checkpoint_path}/llama_cpp_pred_checkpoints/{self.name}.ckp", mode="w", encoding="utf-8") as f_:
+                    json.dump(out_dict, f_)
         
+        # save the last batch that is not full size
+        out_dict = {
+            "pred": np.array(all_y_pred).tolist(),
+            "index": np.array(all_indices).tolist(),
+        }
+        os.makedirs(f"{self.checkpoint_path}/llama_cpp_pred_checkpoints/", exist_ok=True)
+        with open(f"{self.checkpoint_path}/llama_cpp_pred_checkpoints/{self.name}.ckp", mode="w", encoding="utf-8") as f_:
+            json.dump(out_dict, f_)
+
         if len(errors_) > 0:
-            os.makedirs("./llama_cpp_errors/", exist_ok=True)
-            with open(f"./llama_cpp_errors/{self.name}.err", mode="r", encoding="utf-8") as f_:
-                print(errors_, f_)
+            os.makedirs(f"{self.checkpoint_path}/llama_cpp_errors/", exist_ok=True)
+            with open(f"{self.checkpoint_path}/llama_cpp_errors/{self.name}.err", mode="w", encoding="utf-8") as f_:
+                json.dump(errors_, f_)
 
         return np.array(all_y_pred), np.array(all_labels), None
     

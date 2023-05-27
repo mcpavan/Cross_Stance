@@ -1,24 +1,31 @@
 
 config_version_map = [
-    ("BertAAD", 101, 102),
-    # ("BiCondBertLstm", 101, 104),
+    # ("BertAAD", 1, 2),
+    # ("BiCondBertLstm", 1, 4),
     # ("BertBiLSTMAttn", 101, 116),
-    # ("BertBiLSTMJointAttn", 101, 116),
-    # ("BertCrossNet", 101, 108),
-    # ("BertJointCL", 101, 102),
-    # ("BertTOAD", 101, 108),
+    # ("BertBiLSTMJointAttn", 1, 16),
+    ("BertCrossNet", 1, 8),
+    # ("BertJointCL", 1, 2),
+    # ("BertTOAD", 1, 4),
 ]
 
 # config_file_name = "Bert_BiLSTMAttn"
-data_folder = "hold1topic_out" #"hold1topic_out" or "simple_domain"
-out_path = "./sh_auto_train_aad.sh"
+data_folder = "simple_domain" #"hold1topic_out" or "simple_domain"
+out_path = "./sh_auto_train_sd_crossnet.sh"
 
 with open(out_path, "w") as f_:
     print("", end="", file=f_)
 
 target_model_list = ["bo", "lu", "co", "cl", "gl", "ig"]
-base_command = "python train_model.py -m train -c ../../config/{data_folder}/{config_file_name}_v{k}.txt -t ../../data/ustancebr/v2/{data_folder}/final_{tgt}_train.csv -v ../../data/ustancebr/v2/{data_folder}/final_{tgt}_valid.csv -p ../../data/ustancebr/v2/{data_folder}/final_{tgt}_test.csv -n {tgt} -e 5 -s 1"
+base_command = "python train_model.py -m train"
+base_config = " -c ../../config/{data_folder}/{config_file_name}_v{k}.txt"
+base_trn_path = " -t ../../data/ustancebr/v2/{data_folder}/final_{tgt}_train.csv"
+base_vld_path = " -v ../../data/ustancebr/v2/{data_folder}/final_{tgt}_valid.csv"
+base_tst_path = " -p ../../data/ustancebr/v2/{data_folder}/final_{tgt}_test.csv"
+base_others = " -n {tgt} -e 5 -s 1"
+base_command = base_command + base_config + base_trn_path + base_vld_path + base_tst_path + base_others
 base_out = " > ../../out/ustancebr/log/{data_folder}/{tgt}_{config_file_name}_v{k}.txt"
+
 for config_file_name, init_version, final_version in config_version_map:
     base_text = "\n"
 

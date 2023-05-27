@@ -8,10 +8,10 @@ def get_llm_class_and_params(model_type, params):
         return Llama(model_path=params["model_path"])
 
 class LlamaCpp_Model:
-    def __init__(self, params):
+    def __init__(self, params, num_labels=2):
         self.model = Llama(model_path=params["model_path"])
         self.model_type = "llama_cpp"
-        self.num_labels = 1
+        self.num_labels = num_labels
         self.output_dim = 1
     
     def __call__(self, *args: Any, **kwds: Any):
@@ -38,11 +38,11 @@ class LlamaCpp_Model:
         return output["choices"][0]["text"]
 
 class HF_Llama_Model:
-    def __init__(self, model="bigscience/bloom-1b7", hf_model_params={}):
+    def __init__(self, model="bigscience/bloom-1b7", hf_model_params={}, num_labels=2):
         # self.tokenizer = AutoTokenizer.from_pretrained(model)
         self.model = AutoModelForCausalLM.from_pretrained(model, device_map="auto", **hf_model_params)
         self.model_type = "hugging_face"
-        self.num_labels = 1
+        self.num_labels = num_labels
         self.output_dim = 1
 
     def __call__(self, *args: Any, **kwds: Any) -> Any:
