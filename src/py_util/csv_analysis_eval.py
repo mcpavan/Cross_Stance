@@ -11,8 +11,9 @@ pretrained_model_name_map = {
     "../../data/LLMs/ggml-alpaca-7b-q4.bin": "Alpaca-4bit",
 }
 
+dataset = "semeval" # "ustancebr" or "semeval"
 config_base_path = "../../config"
-eval_base_path = "../../out/ustancebr/eval"
+eval_base_path = f"../../out/{dataset}/eval"
 data_path = f"{eval_base_path}/.results/data"
 img_base_path = f"{eval_base_path}/.results/img"
 eval_file_path = f"{data_path}/eval_data.csv"
@@ -69,7 +70,7 @@ best_valid = df.groupby(grp_cols_source) \
             #    .unstack("destination_topic")
 best_valid.to_csv(f"{data_path}/best_valid_metrics_full_test.csv")
 
-if save_plots:
+if save_plots and dataset == "ustancebr":
     sd_df = df.query("source_topic == destination_topic")
     plt.figure(figsize=(16,9))
     sns.boxplot(

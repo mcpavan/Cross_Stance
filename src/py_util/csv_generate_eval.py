@@ -2,7 +2,8 @@ import pandas as pd
 from glob import glob
 from tqdm import tqdm
 
-eval_base_path = "../../out/ustancebr/eval"
+dataset = "semeval" # "ustancebr" or "semeval"
+eval_base_path = f"../../out/{dataset}/eval"
 out_path = f"{eval_base_path}/.results/data/eval_data.csv"
 errors_out_path = f"{eval_base_path}/.results/data/errors_eval_data.csv"
 

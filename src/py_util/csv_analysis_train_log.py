@@ -1,7 +1,8 @@
 import pandas as pd
 
+dataset = "semeval" # "ustancebr" or "semeval"
 config_base_path = "../../config"
-eval_base_path = "../../out/ustancebr/eval"
+eval_base_path = f"../../out/{dataset}/eval"
 data_path = f"{eval_base_path}/.results/data"
 eval_file_path = f"{data_path}/log_data.csv"
 
@@ -17,6 +18,19 @@ out_metrics = [
     "test_pmacro",
     "test_rmacro",
 ]
+
+if dataset == "semeval":
+    out_metrics += [
+        "test_f0",
+        "test_f1",
+        "test_f2",
+        "test_p0",
+        "test_p1",
+        "test_p2",
+        "test_r0",
+        "test_r1",
+        "test_r2",
+    ]
 
 def get_max_value_row(df, max_var):
     idx = df[max_var].idxmax()

@@ -2,11 +2,25 @@ import pandas as pd
 from glob import glob
 from tqdm import tqdm
 import re
+from itertools import product
+import os
 
-log_base_path = "../../out/ustancebr/log"
-eval_base_path = "../../out/ustancebr/eval"
+dataset = "semeval" # "ustancebr" or "semeval"
+log_base_path = f"../../out/{dataset}/log"
+eval_base_path = f"../../out/{dataset}/eval"
 out_path = f"{eval_base_path}/.results/data/log_data.csv"
 errors_out_path = f"{eval_base_path}/.results/data/errors_log_data.csv"
+os.makedirs("/".join(errors_out_path.split("/")[:-1]), exist_ok=True)
+
+if dataset == "ustancebr":
+    data_list = ["valid", "test"]
+    metric_list = ["f", "p", "r"]
+    class_list = ["macro", "0", "1"]
+
+elif dataset == "semeval":
+    data_list = ["valid", "test"]
+    metric_list = ["f", "p", "r"]
+    class_list = ["macro", "0", "1", "2"]
 
 eval_results_dict = {
     "data_folder": [],
@@ -15,35 +29,10 @@ eval_results_dict = {
     "config_file_name": [],
     "version": [],
     "epoch": [],
-    # "train_fmacro": [],
-    # "train_f0": [],
-    # "train_f1": [],
-    # "train_pmacro": [],
-    # "train_p0": [],
-    # "train_p1": [],
-    # "train_rmacro": [],
-    # "train_r0": [],
-    # "train_r1": [],
-    "valid_fmacro": [],
-    "valid_f0": [],
-    "valid_f1": [],
-    "valid_pmacro": [],
-    "valid_p0": [],
-    "valid_p1": [],
-    "valid_rmacro": [],
-    "valid_r0": [],
-    "valid_r1": [],
-    "test_fmacro": [],
-    "test_f0": [],
-    "test_f1": [],
-    "test_pmacro": [],
-    "test_p0": [],
-    "test_p1": [],
-    "test_rmacro": [],
-    "test_r0": [],
-    "test_r1": [],
 }
 
+for data_, metric_, class_ in product(data_list, metric_list, class_list):
+    eval_results_dict[f"{data_}_{metric_}{class_}"] = []
 
 for log_file_path in tqdm(glob(f"{log_base_path}/**/*.txt", recursive=True)):
     log_file_path = log_file_path.replace("\\", "/")

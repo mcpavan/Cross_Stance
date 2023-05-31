@@ -111,7 +111,7 @@ class TOADLoss(torch.nn.Module):
             adversarial_loss = adversarial_loss.to('cuda')
         
         if compute_adv_loss:        #Ladv is computed only on the train dataset else it is left as 0.
-            ladv = self.topic_loss(pred_info['adv_pred'].squeeze_(), pred_info['topic_i'].squeeze_())
+            ladv = self.topic_loss(pred_info['adv_pred'], pred_info['topic_i'])
         
             if self.rho_adv:
                 adversarial_loss = self.adv_param * self.topic_loss(pred_info['adv_pred_'], pred_info['topic_i'])

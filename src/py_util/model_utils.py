@@ -98,6 +98,7 @@ class TorchModelHandler:
             label_tensor = torch.stack(batch_data["label"]).T.type(torch.FloatTensor)
             if len(label_tensor.shape) > 1 and label_tensor.shape[-1] != 1:
                 label_tensor = label_tensor.argmax(dim=1).reshape(-1,1)
+            label_tensor = label_tensor.squeeze()
             
             if self.use_cuda:
                 label_tensor = label_tensor.to("cuda")
@@ -127,7 +128,7 @@ class TorchModelHandler:
             y_pred = self.model(**model_inputs)
 
             # calculate the loss, and backprogate it to update weights
-            graph_loss = self.loss_function(y_pred, label_tensor)
+            graph_loss = self.loss_function(y_pred.squeeze(), label_tensor)
             if "sample_weight" in batch_data:
                 weight_lst = batch_data["sample_weight"]
                 if self.use_cuda:
@@ -162,9 +163,15 @@ class TorchModelHandler:
         :param name: the name of this score function, to be used in storing the scores.
         :param score_dict: the dictionary used to store the scores.
         '''
-        if self.output_dim == 1:
-            vals = score_fn(true_labels, np.floor(pred_labels*self.num_labels), average=None, labels=range(self.num_labels))
-            # vals = score_fn(true_labels, (pred_labels>0.5)*1, average=None, labels=range(self.num_labels))
+        if hasattr(self, "is_llm") and self.is_llm:
+            vals = score_fn(
+                true_labels,
+                np.floor(pred_labels*self.num_labels),
+                average=None,
+                labels=range(self.num_labels)
+            )
+        elif self.output_dim == 1:
+            vals = score_fn(true_labels, (pred_labels>0.5)*1, average=None, labels=range(self.num_labels))
         else:
             if len(true_labels.shape) > 1 and true_labels.shape[-1] != 1:
                 true_labels_ = np.argmax(true_labels, axis=1)
@@ -176,7 +183,12 @@ class TorchModelHandler:
             else:
                 pred_labels_ = pred_labels.squeeze()
             
-            vals = score_fn(true_labels_, pred_labels_, average=None, labels=range(self.num_labels))
+            vals = score_fn(
+                true_labels_,
+                pred_labels_,
+                average=None,
+                labels=range(self.num_labels)
+            )
         if name not in score_dict:
             score_dict[name] = {}
         
@@ -237,7 +249,8 @@ class TorchModelHandler:
                 label_tensor = torch.stack(batch_data["label"]).T.type(torch.FloatTensor)
                 if len(label_tensor.shape) > 1 and label_tensor.shape[-1] != 1:
                     label_tensor = label_tensor.argmax(dim=1).reshape(-1,1)
-                
+                label_tensor = label_tensor.squeeze()
+
                 all_labels = torch.cat((all_labels, label_tensor))
                 if self.use_cuda:
                     label_tensor = label_tensor.to("cuda")
@@ -265,7 +278,7 @@ class TorchModelHandler:
                 # if self.use_cuda:
                 all_y_pred = torch.cat((all_y_pred, y_pred.cpu()))
                 
-                graph_loss = self.loss_function(y_pred, label_tensor)
+                graph_loss = self.loss_function(y_pred.squeeze(), label_tensor)
                 if "sample_weight" in batch_data:
                     weight_lst = batch_data["sample_weight"]
                     if self.use_cuda:
@@ -384,7 +397,7 @@ class TOADTorchModelHandler(TorchModelHandler):
                 label_tensor = label_tensor.argmax(dim=1).reshape(-1,1)
             label_tensor = label_tensor.squeeze()
             if len(label_tensor.shape) == 0:
-                    continue
+                continue
 
             topic_tensor = torch.stack(batch_data["topic_label"]).T
             if len(topic_tensor.shape) > 1 and topic_tensor.shape[-1] != 1:
@@ -531,9 +544,15 @@ class TOADTorchModelHandler(TorchModelHandler):
         avg_loss = partial_main_loss / batch_n #loss per batch
         return all_stance_pred, all_stance_labels, all_topic_pred, all_topic_labels, avg_loss
 
-    def eval_model(self, data=None):
+    def eval_model(self, data=None, y_pred=None):
         # pred_topics and true_topics will be none while evaluating on dev set
-        stance_pred, stance_labels, topic_pred, topic_labels, loss = self.predict(data)
+        if y_pred is not None:
+            stance_pred = np.reshape(a=y_pred, newshape=(-1,1))
+            stance_labels = self.get_labels(data=data)
+            loss = 0
+        else:
+            stance_pred, stance_labels, topic_pred, topic_labels, loss = self.predict(data)
+
         score_dict = self.score(stance_pred, stance_labels)
 
         return score_dict, loss, stance_pred
@@ -583,6 +602,7 @@ class AADTorchModelHandler(TorchModelHandler):
             label_tensor = torch.stack(batch_data["label"]).T.type(torch.FloatTensor)
             if len(label_tensor.shape) > 1 and label_tensor.shape[-1] != 1:
                 label_tensor = label_tensor.argmax(dim=1).reshape(-1,1)
+            label_tensor = label_tensor.squeeze()
             
             if self.use_cuda:
                 label_tensor = label_tensor.to("cuda")
@@ -596,7 +616,7 @@ class AADTorchModelHandler(TorchModelHandler):
             y_pred = self.model(text_embeddings=text_embeddings)
 
             # calculate the loss, and backprogate it to update weights
-            graph_loss = self.loss_function(y_pred, label_tensor)
+            graph_loss = self.loss_function(y_pred.squeeze(), label_tensor)
             if "sample_weight" in batch_data:
                 weight_lst = batch_data["sample_weight"]
                 if self.use_cuda:
@@ -758,6 +778,7 @@ class AADTorchModelHandler(TorchModelHandler):
                 label_tensor = torch.stack(batch_data["label"]).T.type(torch.FloatTensor)
                 if len(label_tensor.shape) > 1 and label_tensor.shape[-1] != 1:
                     label_tensor = label_tensor.argmax(dim=1).reshape(-1,1)
+                label_tensor = label_tensor.squeeze()
 
                 if batch_n:
                     all_stance_labels = torch.cat((all_stance_labels, label_tensor))
@@ -779,7 +800,7 @@ class AADTorchModelHandler(TorchModelHandler):
                     all_stance_pred = y_pred.cpu()
 
                 # calculate the loss, and backprogate it to update weights
-                graph_loss = self.loss_function(y_pred, label_tensor)
+                graph_loss = self.loss_function(y_pred.squeeze(), label_tensor)
                 if "sample_weight" in batch_data:
                     weight_lst = batch_data["sample_weight"]
                     if self.use_cuda:
@@ -1081,6 +1102,7 @@ class LLMTorchModelHandler(TorchModelHandler):
             **params
         )
         
+        self.is_llm = True
         self.model = params["model"]
         self.model_params = params.get("model_params", {})
         self.dataset = params["dataset"]

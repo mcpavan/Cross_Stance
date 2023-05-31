@@ -48,7 +48,7 @@ class PredictionLayer(torch.nn.Module):
         if self.output_dim == 1:
             self.pred_fn = nn.Sigmoid()
         else:
-            self.pred_fn = nn.Softmax()
+            self.pred_fn = nn.Softmax(dim=1)
         
         if self.input_dim:
             self.model = nn.Sequential(

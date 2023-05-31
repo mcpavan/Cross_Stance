@@ -45,6 +45,7 @@ def load_data(config, args, data_key="trn"):
             random_state = float(args.get("random_state", 123)),
             tokenizer_params = tokenizer_params,
             skip_rows = args.get(f"skip_rows_{data_key}"),
+            alpha_load_classes = args.get("alpha_load_classes", False),
         )
     elif config.get("model_type", "").lower() in ["llama_cpp", "hf_llm"]:
         data = datasets.LLMStanceDataset(
@@ -61,6 +62,7 @@ def load_data(config, args, data_key="trn"):
             model_type = config.get("model_type", "").lower(),
             tokenizer_params = tokenizer_params,
             skip_rows = args.get(f"skip_rows_{data_key}"),
+            alpha_load_classes = args.get("alpha_load_classes", False),
         )
     else:
         #TODO: Create dataset for other types of models
@@ -94,7 +96,7 @@ def train(model_handler, num_epochs, early_stopping_patience=0, verbose=True, vl
     tst_scores_dict = {}
     
     best_vld_loss = float("inf")
-    last_vld_loss = float("inf")
+    # last_vld_loss = float("inf")
     greater_loss_epochs = 0
 
     if train_step_fn is None:
@@ -106,7 +108,7 @@ def train(model_handler, num_epochs, early_stopping_patience=0, verbose=True, vl
         print("Total training loss: {}".format(model_handler.loss))
 
         # print training (& vld) scores
-        if verbose:
+        # if verbose:
             # eval model on training data
             # trn_scores, trn_loss = eval_helper(
             #     model_handler,
@@ -116,40 +118,45 @@ def train(model_handler, num_epochs, early_stopping_patience=0, verbose=True, vl
             # print("Training loss: {}".format(trn_loss))
 
             # update best model checkpoint
-            if vld_data is not None:
-                vld_scores, vld_loss, vld_y_pred = eval_helper(
-                    model_handler,
-                    data_name='VALIDATION',
-                    data=vld_data
-                )
-                vld_scores_dict[epoch] = copy.deepcopy(vld_scores)
-                # print vld loss
+        
+        if vld_data is not None and early_stopping_patience > 0:
+            vld_scores, vld_loss, vld_y_pred = eval_helper(
+                model_handler,
+                data_name='VALIDATION',
+                data=vld_data
+            )
+            vld_scores_dict[epoch] = copy.deepcopy(vld_scores)
+            # print vld loss
+            if verbose:
                 print("Avg Validation loss: {}".format(vld_loss))
 
-                #check if is best vld loss to save best model
-                if vld_loss < best_vld_loss:
-                    model_handler.save_best()
-
-                # check if the current vld loss is greater than the last loss and
-                # break the training loop if its over the early stopping patience
-                early_stopping_patience += vld_loss > last_vld_loss
-                if greater_loss_epochs > early_stopping_patience:
-                    break
-                
-                if model_handler.has_scheduler:
-                    model_handler.scheduler.step(vld_loss)
-            else:
+            #check if is best vld loss to save best model
+            print(vld_loss, best_vld_loss, vld_loss < best_vld_loss)
+            if vld_loss < best_vld_loss:
+                best_vld_loss = vld_loss
+                greater_loss_epochs = 0
                 model_handler.save_best()
+
+            # check if the current vld loss is greater than the last loss and
+            # break the training loop if its over the early stopping patience
+            greater_loss_epochs += vld_loss >= best_vld_loss
+            if greater_loss_epochs > early_stopping_patience:
+                break
             
-            if tst_data is not None:
-                tst_scores, tst_loss, tgt_y_pred = eval_helper(
-                    model_handler,
-                    data_name='TEST',
-                    data=tst_data
-                )
-                tst_scores_dict[epoch] = copy.deepcopy(tst_scores)
-                # print vld loss
-                print("Avg Test loss: {}".format(tst_loss))
+            if model_handler.has_scheduler:
+                model_handler.scheduler.step(vld_loss)
+        else:
+            model_handler.save_best()
+            
+        if tst_data is not None and verbose:
+            tst_scores, tst_loss, tgt_y_pred = eval_helper(
+                model_handler,
+                data_name='TEST',
+                data=tst_data
+            )
+            tst_scores_dict[epoch] = copy.deepcopy(tst_scores)
+            # print vld loss
+            print("Avg Test loss: {}".format(tst_loss))
 
     print("TRAINED for {} epochs".format(epoch))
 
@@ -229,7 +236,7 @@ def train_JointCL(model_handler, num_epochs, early_stopping_patience=0, verbose=
     tst_scores_dict = {}
     
     best_vld_loss = float("inf")
-    last_vld_loss = float("inf")
+    # last_vld_loss = float("inf")
     greater_loss_epochs = 0
 
     if train_step_fn is None:
@@ -241,7 +248,7 @@ def train_JointCL(model_handler, num_epochs, early_stopping_patience=0, verbose=
         print("Total training loss: {}".format(model_handler.loss))
 
         # print training (& vld) scores
-        if verbose:
+        # if verbose:
             # eval model on training data
             # trn_scores, trn_loss = eval_helper(
             #     model_handler,
@@ -251,40 +258,43 @@ def train_JointCL(model_handler, num_epochs, early_stopping_patience=0, verbose=
             # print("Training loss: {}".format(trn_loss))
 
             # update best model checkpoint
-            if vld_data is not None:
-                vld_scores, vld_loss, vld_y_pred = eval_helper(
-                    model_handler,
-                    data_name='VALIDATION',
-                    data=vld_data
-                )
-                vld_scores_dict[epoch] = copy.deepcopy(vld_scores)
-                # print vld loss
+        if vld_data is not None and early_stopping_patience > 0:
+            vld_scores, vld_loss, vld_y_pred = eval_helper(
+                model_handler,
+                data_name='VALIDATION',
+                data=vld_data
+            )
+            vld_scores_dict[epoch] = copy.deepcopy(vld_scores)
+            # print vld loss
+            if verbose:
                 print("Avg Validation loss: {}".format(vld_loss))
 
-                #check if is best vld loss to save best model
-                if vld_loss < best_vld_loss:
-                    model_handler.save_best()
-
-                # check if the current vld loss is greater than the last loss and
-                # break the training loop if its over the early stopping patience
-                early_stopping_patience += vld_loss > last_vld_loss
-                if greater_loss_epochs > early_stopping_patience:
-                    break
-                
-                if model_handler.has_scheduler:
-                    model_handler.scheduler.step(vld_loss)
-            else:
+            #check if is best vld loss to save best model
+            if vld_loss < best_vld_loss:
+                best_vld_loss = vld_loss
+                greater_loss_epochs = 0
                 model_handler.save_best()
+
+            # check if the current vld loss is greater than the last loss and
+            # break the training loop if its over the early stopping patience
+            greater_loss_epochs += vld_loss >= best_vld_loss
+            if greater_loss_epochs > early_stopping_patience:
+                break
             
-            if tst_data is not None:
-                tst_scores, tst_loss, tgt_y_pred = eval_helper(
-                    model_handler,
-                    data_name='TEST',
-                    data=tst_data
-                )
-                tst_scores_dict[epoch] = copy.deepcopy(tst_scores)
-                # print vld loss
-                print("Avg Test loss: {}".format(tst_loss))
+            if model_handler.has_scheduler:
+                model_handler.scheduler.step(vld_loss)
+        else:
+            model_handler.save_best()
+            
+        if tst_data is not None and verbose:
+            tst_scores, tst_loss, tgt_y_pred = eval_helper(
+                model_handler,
+                data_name='TEST',
+                data=tst_data
+            )
+            tst_scores_dict[epoch] = copy.deepcopy(tst_scores)
+            # print vld loss
+            print("Avg Test loss: {}".format(tst_loss))
 
     print("TRAINED for {} epochs".format(epoch))
 
@@ -1232,7 +1242,7 @@ if __name__ == "__main__":
     parser.add_argument('-v', '--vld_data', dest="vld_data", help='Name of the validation data file', default=None, required=False)
     parser.add_argument('-p', '--tst_data', dest="tst_data", help='Name of the test data file', default=None, required=False)
     parser.add_argument('-n', '--name', dest="name", help='something to add to the saved model name', required=False, default='')
-    parser.add_argument('-e', '--early_stop', dest="early_stop", help='Whether to do early stopping or not', required=False, type=bool, default=False)
+    parser.add_argument('-e', '--early_stop', dest="early_stop", help='Whether to do early stopping or not', required=False, type=int, default=False)
     # parser.add_argument('-w', '--num_warm', dest="num_warm", help='Number of warm-up epochs', required=False, type=int, default=0)
     # parser.add_argument('-k', '--score_key', dest="score_key", help='Score to use for optimization', required=False, default='f_macro')
     parser.add_argument('-s', '--save_ckp', dest="save_ckp", help='Whether to save checkpoints', required=False, default=0, type=int)

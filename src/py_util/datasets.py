@@ -30,6 +30,8 @@ class BertStanceDataset(Dataset):
         :param data_sample: int or float that indicates to load only a sample of the original dataset in the file.
         :param random_state: random seed for generating the sample.
         :param tokenizer_params: dict of parameters passed to the tokenizer loader
+        :param alpha_load_classes: Weather to load classes (target and topic) in alphabetical order.
+               indicated to the cases where there are different sizes of strata in the train/valid/test sets.
         """
 
         skip_rows = kwargs.get("skip_rows")
@@ -69,11 +71,11 @@ class BertStanceDataset(Dataset):
             )
             self.df.reset_index(drop=True, inplace=True)
         
-        self.tgt2vec, self.vec2tgt, self.tgt_cnt = create_tgt_lookup_tables(self.df[self.label_col])
+        self.tgt2vec, self.vec2tgt, self.tgt_cnt = create_tgt_lookup_tables(self.df[self.label_col], alpha_order=kwargs.get("alpha_load_classes", False))
         self.df["vec_target"] = [self.convert_lbl_to_vec(tgt, self.tgt2vec) for tgt in self.df[self.label_col]]
         self.n_labels = len(self.tgt_cnt)
 
-        self.topic2vec, self.vec2topic, self.topic_cnt = create_tgt_lookup_tables(self.df[self.topic_col])
+        self.topic2vec, self.vec2topic, self.topic_cnt = create_tgt_lookup_tables(self.df[self.topic_col], alpha_order=kwargs.get("alpha_load_classes", False))
         self.df["vec_topic"] = [self.convert_lbl_to_vec(tgt, self.topic2vec) for tgt in self.df[self.topic_col]]
 
         self.max_seq_len_text = int(kwargs["max_seq_len_text"])
@@ -299,6 +301,8 @@ class LLMStanceDataset(Dataset):
         :param random_state: random seed for generating the sample.
         :param model_type: "llama_cpp" or "hf_llm"
         :param tokenizer_params: dict of parameters passed to the tokenizer loader
+        :param alpha_load_classes: Weather to load classes (target and topic) in alphabetical order.
+               indicated to the cases where there are different sizes of strata in the train/valid/test sets.
         """
 
         skip_rows = kwargs.get("skip_rows")
@@ -341,11 +345,11 @@ class LLMStanceDataset(Dataset):
             )
             self.df.reset_index(drop=True, inplace=True)
         
-        self.tgt2vec, self.vec2tgt, self.tgt_cnt = create_tgt_lookup_tables(self.df[self.label_col])
+        self.tgt2vec, self.vec2tgt, self.tgt_cnt = create_tgt_lookup_tables(self.df[self.label_col], alpha_order=kwargs.get("alpha_load_classes", False))
         self.df["vec_target"] = [self.convert_lbl_to_vec(tgt, self.tgt2vec) for tgt in self.df[self.label_col]]
         self.n_labels = len(self.tgt_cnt)
 
-        self.topic2vec, self.vec2topic, self.topic_cnt = create_tgt_lookup_tables(self.df[self.topic_col])
+        self.topic2vec, self.vec2topic, self.topic_cnt = create_tgt_lookup_tables(self.df[self.topic_col], alpha_order=kwargs.get("alpha_load_classes", False))
         self.df["vec_topic"] = [self.convert_lbl_to_vec(tgt, self.topic2vec) for tgt in self.df[self.topic_col]]
 
         self.sample_weights = bool(int(kwargs.get("sample_weights", "0")))
@@ -461,14 +465,17 @@ class LLMStanceDataset(Dataset):
     def get_num_topics(self):
         return len(self.get_topic_list())
     
-def create_tgt_lookup_tables(targets):
+def create_tgt_lookup_tables(targets, alpha_order=False):
     """
     Create lookup tables for targets
     :param text: List of targets for each instance
     :return: A tuple of dicts (tgt2vec, vec2tgt, tgt_cnt)
     """
     tgt_cnt = Counter([t.lower() for t in targets])
-    sort_voc = sorted(tgt_cnt, key=tgt_cnt.get, reverse=True)
+    if alpha_order:
+        sort_voc = sorted(tgt_cnt, key=tgt_cnt.get, reverse=True)
+    else:
+        sort_voc = sorted(tgt_cnt)
     vec2tgt = {}
     tgt2vec = {}
 
