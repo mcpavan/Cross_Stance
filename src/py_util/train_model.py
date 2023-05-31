@@ -131,7 +131,6 @@ def train(model_handler, num_epochs, early_stopping_patience=0, verbose=True, vl
                 print("Avg Validation loss: {}".format(vld_loss))
 
             #check if is best vld loss to save best model
-            print(vld_loss, best_vld_loss, vld_loss < best_vld_loss)
             if vld_loss < best_vld_loss:
                 best_vld_loss = vld_loss
                 greater_loss_epochs = 0
