@@ -1,4 +1,4 @@
-import torch, time, math, numpy as np
+import torch, datetime, time, math, numpy as np
 from sklearn.metrics import f1_score, precision_score, recall_score
 from tqdm import tqdm
 import os
@@ -1166,6 +1166,7 @@ class LLMTorchModelHandler(TorchModelHandler):
         if data is None:
             data = self.dataloader
         
+        call_count = 0
         for batch_n, batch_data in tqdm(enumerate(data)):
             label_tensor = torch.stack(batch_data["label"]).T.type(torch.LongTensor)
             if len(label_tensor.shape) > 1 and label_tensor.shape[-1] != 1:
@@ -1175,7 +1176,8 @@ class LLMTorchModelHandler(TorchModelHandler):
             all_labels += label_tensor.tolist()
             all_indices += batch_data["index"]
 
-            if self.model.model_type == "llama_cpp":
+            
+            if self.model.model_type in ["llama_cpp", "hf_api"]:
                 prompt_list = batch_data["prompt"]
 
                 str_output_tensor = []
@@ -1186,6 +1188,12 @@ class LLMTorchModelHandler(TorchModelHandler):
                             params = self.model_params,
                         )
                     ]
+                
+                # if self.model.model_type == "hf_api" and call_count >= 180:
+                    # call_count += 1
+                    # print(f"180 calls made, Waiting 11 minutes... {datetime.datetime.now()}")
+                    # for i in tqdm(range(11*60), leave=False, desc="Waiting 11 minutes"):
+                    #     time.sleep(1)
                     
             elif self.model.model_type == "hugging_face":
 
@@ -1214,7 +1222,7 @@ class LLMTorchModelHandler(TorchModelHandler):
                 os.makedirs(f"{self.checkpoint_path}/llama_cpp_pred_checkpoints/", exist_ok=True)
                 with open(f"{self.checkpoint_path}/llama_cpp_pred_checkpoints/{self.name}.ckp", mode="w", encoding="utf-8") as f_:
                     json.dump(out_dict, f_)
-        
+
         # save the last batch that is not full size
         out_dict = {
             "pred": np.array(all_y_pred).tolist(),

@@ -23,6 +23,8 @@ Cross-Target stance detection
 
 - llama-cpp-python==0.1.48 - only for llama_cpp
 
+- sentence-transformers==2.2.2
+
 # Training a model:
 
 General syntax:

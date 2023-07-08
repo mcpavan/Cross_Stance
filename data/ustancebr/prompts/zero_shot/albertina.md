@@ -1,0 +1,3 @@
+Identificar Posicionamento em textos é uma  tarefa diferente de identificar sentimento, porque p Posicionamento é a atitude do autor do texto em relação a um dado alvo. Neste cenário, um posicionamento pode ser favorável ou contrário ao alvo. Dado um texto, é possível identificar o posicionamento do autor em relação a um alvo gerando um valor entre 0 e 10 onde 0 significa que o texto é totalmente contrário ao alvo, e 10 significa que o texto é totalmente a favor do alvo, no formato`x/10`.
+
+Por exemplo, para o texto "Desorientado com as denúncias de corrupção em seu governo, Bolsonaro ataca jornalista: \"\"você está falando da tua mãe" e alvo "vítima" o valor de posicionamento seria [MASK]/10

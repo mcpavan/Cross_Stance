@@ -6,6 +6,8 @@ import torch
 from collections import Counter
 from torch.utils.data import Dataset
 from transformers import BertTokenizer, AutoTokenizer
+from sentence_transformers import SentenceTransformer#, util
+from sklearn.metrics.pairwise import cosine_similarity
 
 class BertStanceDataset(Dataset):
     
@@ -303,6 +305,10 @@ class LLMStanceDataset(Dataset):
         :param tokenizer_params: dict of parameters passed to the tokenizer loader
         :param alpha_load_classes: Weather to load classes (target and topic) in alphabetical order.
                indicated to the cases where there are different sizes of strata in the train/valid/test sets.
+        # few-shot
+        :param sentence_model_name: name of the sentence model to be loaded to embed the texts.
+        :param n_similar_sentences: number of similar sentences to consider as examples.
+        :param train_dataset: train Dataset object that contains the examples to be used.
         """
 
         skip_rows = kwargs.get("skip_rows")
@@ -378,12 +384,57 @@ class LLMStanceDataset(Dataset):
             "..."
         )
 
+        self.sentence_model = None
+        self.sentence_model_name = kwargs.get("sentence_model_name")
+        if self.sentence_model_name is not None:
+            self.sentence_model = SentenceTransformer(self.sentence_model_name)
+
+            self.df["text_sentence_emb"] = self.df.apply(lambda x:
+                self.sentence_model.encode(f"Target: {x[self.topic_col ]}\nText: {x[self.text_col]}"),
+                axis=1
+            )
+
+            train_dataset = kwargs.get("train_dataset")
+            if train_dataset is not None:
+                train_emb = np.stack(train_dataset.df["text_sentence_emb"])
+                pred_emb = np.stack(self.df["text_sentence_emb"])
+
+                cos_simi_ = cosine_similarity(pred_emb, train_emb)
+                sorted_cos_simi_ = np.argsort(cos_simi_)
+
+                list_examples_str = []
+                n_similar_sentences = int(kwargs.get("n_similar_sentences", "1"))
+                for pred_ in sorted_cos_simi_:
+                    closest_examples_ids = pred_[-n_similar_sentences:]
+
+                    examples = train_dataset.df \
+                        .loc[
+                            closest_examples_ids,
+                            [self.text_col, self.topic_col, self.label_col]
+                        ] \
+                        .to_dict(orient="records")
+                    
+                    examples_str = ""
+                    for k, example_dict in enumerate(examples, 1):
+                        examples_str += f"\n#### Example {k}\n" \
+                            + f"Text: {example_dict[self.text_col]}\n" \
+                            + f"Target: {example_dict[self.topic_col]}\n" \
+                            + f"Stance: {example_dict[self.label_col]}\n"
+                    
+                    list_examples_str += [examples_str.strip()]
+                
+                self.df["examples"] = list_examples_str
+
         for idx in self.df.index:
             self.df.at[idx, "weight"] = self.weight_dict[tuple(self.df.loc[idx, [self.topic_col, self.label_col]])]
 
             current_text = self.df.loc[idx, self.text_col]
             current_topic = self.df.loc[idx, self.topic_col]
-            self.df.at[idx, "prompt"] = self.prompt_template.replace("{text}", current_text).replace("{topic}", current_topic)
+            current_examples = self.df.loc[idx, "examples"] if "examples" in self.df.columns else ""
+            self.df.at[idx, "prompt"] = self.prompt_template \
+                .replace("{text}", current_text) \
+                .replace("{topic}", current_topic) \
+                .replace("{examples}", current_examples)
             
             if self.tokenized_input:
                 enc_prompt = self.tokenizer(

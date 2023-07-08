@@ -1,11 +1,14 @@
+import datetime
+import time
 from typing import Any
 from llama_cpp import Llama
 from transformers import AutoModelForCausalLM, AutoTokenizer
+import requests
 
-def get_llm_class_and_params(model_type, params):
-    model_type = model_type.lower()
-    if model_type == "llama_cpp":
-        return Llama(model_path=params["model_path"])
+# def get_llm_class_and_params(model_type, params):
+#     model_type = model_type.lower()
+#     if model_type == "llama_cpp":
+#         return Llama(model_path=params["model_path"])
 
 class LlamaCpp_Model:
     def __init__(self, params, num_labels=2):
@@ -55,3 +58,45 @@ class HF_Llama_Model:
         )
         # self.tokenizer.batch_decode(generated_ids, skip_special_tokens=True, clean_up_tokenization_spaces=True)
         return generated_ids
+
+class HF_API_Model:
+    
+    def __init__(self, api_url, auth_token, params={}, num_labels=2):
+        self.api_url = api_url
+        self.headers = {"Authorization": f"Bearer {auth_token}"}
+        self.params = params
+        self.model_type = "hf_api"
+        self.num_labels = num_labels
+        self.output_dim = 1
+    
+    def __call__(self, *args: Any, **kwds: Any):
+        return self.forward(*args, **kwds)
+
+    def forward(self, prompt, params):
+        payload = {
+            "inputs": prompt,
+            "parameters": {
+                "return_full_text": False,
+            }
+                
+        }
+        payload["parameters"].update(self.params)
+        payload["parameters"].update(params)
+        
+        count=0
+        while True:
+            time.sleep(5)
+            response = requests.post(
+                self.api_url,
+                headers=self.headers,
+                json=payload
+            )
+            
+            if str(response) == "<Response [200]>":
+                break
+            else:
+                count+=1
+                print(f"Got '{str(response)}'. Waiting {count*60} seconds ({count} minutes)... {datetime.datetime.now()}")
+                time.sleep(count*60)
+
+        return response.json()[0]["generated_text"]

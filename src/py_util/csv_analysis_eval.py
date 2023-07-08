@@ -37,6 +37,19 @@ out_metrics = [
     "test_rmacro",
 ]
 
+if dataset == "semeval":
+    out_metrics += [
+        "test_f0",
+        "test_f1",
+        "test_f2",
+        "test_p0",
+        "test_p1",
+        "test_p2",
+        "test_r0",
+        "test_r1",
+        "test_r2",
+    ]
+
 def get_max_value_row(df, max_var):
     idx = df[max_var].idxmax()
 
@@ -47,7 +60,7 @@ def get_pretrained_model_name(info):
     config_file_name = info["config_file_name"]
     version = info["version"]
 
-    config_file_path = f"{config_base_path}/{data_folder}/{config_file_name}_v{version}.txt"
+    config_file_path = f"{config_base_path}/{dataset}/{data_folder}/{config_file_name}_v{int(version)}.txt"
 
     config_dict = load_config_file(config_file_path=config_file_path)
     model_name = "-"
@@ -62,11 +75,11 @@ def get_pretrained_model_name(info):
 
 df = pd.read_csv(eval_file_path)
 df["pretrained_model"] = df.apply(get_pretrained_model_name, axis=1)
-df["valid_fmacro"] = df["valid_fmacro"].fillna(0)
+df["valid_fmacro"] = df[["test_fmacro", "valid_fmacro"]].apply(lambda x: x["valid_fmacro"] if x["valid_fmacro"] == x["valid_fmacro"] else x["test_fmacro"], axis=1)
 
 best_valid = df.groupby(grp_cols_source) \
                .apply(lambda x: get_max_value_row(x, "valid_fmacro")) \
-               [["test_fmacro", "test_pmacro", "test_rmacro", "version"]] #\
+               [out_metrics+["version"]] #\
             #    .unstack("destination_topic")
 best_valid.to_csv(f"{data_path}/best_valid_metrics_full_test.csv")
 

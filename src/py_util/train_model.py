@@ -7,6 +7,8 @@ import torch
 import pandas as pd
 import json
 import os
+import numpy as np
+import re
 
 import datasets, models, input_models, model_utils, loss_fn as lf, JointCL_loss, llms
 
@@ -17,11 +19,10 @@ def load_config_file(config_file_path):
     with open(config_file_path, 'r') as f:
         config = dict()
         for l in f.readlines():
-            config[l.strip().split(":")[0]] = l.strip().split(":")[1]
-    
+            config[l.strip().split(":")[0]] = ":".join(l.strip().split(":")[1:])
     return config
 
-def load_data(config, args, data_key="trn"):
+def load_data(config, args, data_key="trn", trn_data=None):
     tokenizer_params = {}
     for k, v in config.items():
         if k.startswith("hf_tokenizer_"):
@@ -42,12 +43,13 @@ def load_data(config, args, data_key="trn"):
             is_joint = config.get("is_joint"),
             sample_weights = config.get("sample_weights"),
             data_sample = float(args.get("train_data_sample", 1.0)) if data_key == "trn" else 1,
-            random_state = float(args.get("random_state", 123)),
+            random_state = int(args.get("random_state", 123)),
             tokenizer_params = tokenizer_params,
             skip_rows = args.get(f"skip_rows_{data_key}"),
             alpha_load_classes = args.get("alpha_load_classes", False),
         )
-    elif config.get("model_type", "").lower() in ["llama_cpp", "hf_llm"]:
+    elif config.get("model_type", "").lower() in ["llama_cpp", "hf_llm", "hf_api"]:
+        needs_few_shot_examples = int(config.get("needs_few_shot_examples", "0"))
         data = datasets.LLMStanceDataset(
             data_file = args[f'{data_key}_data'],
             prompt_file = config["prompt_template_file"],
@@ -58,11 +60,14 @@ def load_data(config, args, data_key="trn"):
             pretrained_model_name = config.get("pretrained_model_name"),
             sample_weights = config.get("sample_weights"),
             data_sample = float(args.get("train_data_sample", 1.0)) if data_key == "trn" else 1,
-            random_state = float(args.get("random_state", 123)),
+            random_state = int(args.get("random_state", 123)),
             model_type = config.get("model_type", "").lower(),
             tokenizer_params = tokenizer_params,
             skip_rows = args.get(f"skip_rows_{data_key}"),
             alpha_load_classes = args.get("alpha_load_classes", False),
+            sentence_model_name = config.get("sentence_model_name") if needs_few_shot_examples else None,
+            n_similar_sentences = config.get("n_similar_sentences") if needs_few_shot_examples else None,
+            train_dataset = trn_data if needs_few_shot_examples else None,
         )
     else:
         #TODO: Create dataset for other types of models
@@ -331,7 +336,12 @@ def save_predictions(model_handler, dev_data, dev_dataloader, out_name, config, 
     
     dev_preds = []
     dev_proba = []
-    if int(config['n_output_classes']) == 2:
+
+    if hasattr(model_handler, "is_llm") and model_handler.is_llm:
+        dev_proba = dev_results
+        dev_preds = np.floor(dev_results*model_handler.num_labels)
+    
+    elif int(config['n_output_classes']) == 2:
         for pred_val in dev_results:
             dev_proba.append(pred_val)
 
@@ -339,6 +349,7 @@ def save_predictions(model_handler, dev_data, dev_dataloader, out_name, config, 
             vec_pred = (int_pred,)
 
             dev_preds.append(dev_data.convert_vec_to_lbl(vec_pred))
+    
     else:
         base_vec = [0 for i in range(int(config['n_output_classes']))]
         
@@ -406,8 +417,9 @@ def main(args):
     # load config file #
     ####################
     config = load_config_file(args['config_file'])
-    is_llm = config.get("model_type","").lower() in ["llama_cpp", "hf_llm"]
+    is_llm = config.get("model_type","").lower() in ["llama_cpp", "hf_llm", "hf_api"]
     is_hfllm = config.get("model_type","").lower() == "hf_llm"
+    needs_few_shot_examples = int(config.get("needs_few_shot_examples", "0"))
 
     #############
     # LOAD DATA #
@@ -415,6 +427,7 @@ def main(args):
     # load training data
     batch_size = int(config['batch_size']) if not is_llm else 1
     train_fn = train
+    train_data = None
     if args['trn_data'] is not None:
         train_data = load_data(config, args, data_key="trn")
         train_n_batches = math.ceil(len(train_data) / batch_size)
@@ -434,7 +447,7 @@ def main(args):
 
     # load vld data if specified
     if args['vld_data'] is not None:
-        vld_data = load_data(config, args, data_key="vld")
+        vld_data = load_data(config, args, data_key="vld", trn_data=train_data)
         vld_n_batches = math.ceil(len(vld_data) / batch_size)
         print(f"# of Validation instances: {len(vld_data)}. Batch Size={batch_size}. # of batches: {vld_n_batches}")
 
@@ -450,7 +463,7 @@ def main(args):
 
     # load tst data if specified
     if args['tst_data'] is not None:
-        tst_data = load_data(config, args, data_key="tst")
+        tst_data = load_data(config, args, data_key="tst", trn_data=train_data)
         tst_n_batches = math.ceil(len(tst_data) / batch_size)
         print(f"# of Test instances: {len(tst_data)}. Batch Size={batch_size}. # of batches: {tst_n_batches}")
 
@@ -1065,7 +1078,7 @@ def main(args):
             **kwargs
         )
 
-    elif 'llama_cpp' in config['model_type'] or "hf_llm" in config['model_type']:
+    elif is_llm:
         if 'llama_cpp' in config['model_type']:
             
             llama_cpp_params = {
@@ -1085,6 +1098,29 @@ def main(args):
             model = llms.HF_Llama_Model(
                 model=config.get("pretrained_model_name", "bigscience/bloom-1b7"),
                 hf_model_params=hf_model_params,
+                num_labels=nl,
+            )
+        
+        elif "hf_api" in config['model_type']:
+
+            model_params = {}
+            for k,v in config.items():
+                if k.startswith("hf_api_"):
+                    if v.lower().strip() in ["true", "false"]:
+                        model_params[k.replace("hf_api_", "")] = v.lower().strip() == "true"
+                    else:
+                        is_number = re.match("\A\d+(.\d*)\Z|\A\d+e(-)*\d+\Z", v) 
+                        if is_number and "." in v or "e" in v:
+                            model_params[k.replace("hf_api_", "")] = float(v.lower())
+                        elif is_number:
+                            model_params[k.replace("hf_api_", "")] = int(v.lower())
+                        else:
+                            model_params[k.replace("hf_api_", "")] = v.lower()
+            
+            model = llms.HF_API_Model(
+                api_url=config.get("api_url", "https://api-inference.huggingface.co/models/bigscience/bloom"),
+                auth_token=config.get("auth_token"),
+                params=model_params,
                 num_labels=nl,
             )
         
@@ -1162,10 +1198,10 @@ def main(args):
     
     if 'eval' in args["mode"]:
         # Evaluate saved model
-        if config.get("model_type") not in ["llama_cpp", "hf_llm"]:
+        if not is_llm:
             model_handler.load(filename=args["saved_model_file_name"])
         
-        if trn_dataloader is not None:
+        if trn_dataloader is not None and not needs_few_shot_examples:
             trn_scores, trn_loss, trn_y_pred = eval_helper(
                 model_handler,
                 data_name='TRAIN',
@@ -1193,10 +1229,10 @@ def main(args):
         out_path = args.get("out_path", "./pred")
         print("Output Path:", out_path)
         # laod saved model and save the predictions
-        if config.get("model_type") not in ["llama_cpp", "hf_llm"]:
+        if not is_llm:
             model_handler.load(filename=args["saved_model_file_name"])
         
-        if trn_dataloader is not None:
+        if trn_dataloader is not None and not needs_few_shot_examples:
             save_predictions(
                 model_handler=model_handler,
                 dev_data=train_data,
@@ -1249,7 +1285,7 @@ if __name__ == "__main__":
     parser.add_argument('-o', '--out_path', dest="out_path", help='Ouput file name', default=None)
     parser.add_argument('-d', '--drop_last_batch', type=bool, dest="drop_last_batch", help="Whether to drop the last batch or not", default=False)
     parser.add_argument('-a', '--train_data_sample', type=float, dest="train_data_sample", help="Value to sample the train data.", default=1.0)
-    parser.add_argument('-r', '--random_state', type=int, dest="train_data_sample", help="Random state seed to sample the train data.", default=123)
+    parser.add_argument('-r', '--random_state', type=int, dest="random_state", help="Random state seed to sample the train data.", default=123)
     parser.add_argument('-k', '--skip_rows_trn', type=int, dest="skip_rows_trn", help="Skip rows in train data.", default=0)
     parser.add_argument('-j', '--skip_rows_vld', type=int, dest="skip_rows_vld", help="Skip rows in validation data.", default=0)
     parser.add_argument('-l', '--skip_rows_tst', type=int, dest="skip_rows_tst", help="Skip rows in test data.", default=0)
@@ -1320,6 +1356,10 @@ if __name__ == "__main__":
 # python train_model.py -m predict -c ../../config/Llama_4bit_example.txt  -p ../../../data/ustancebr/v2/simple_domain/final_bo_test.csv -o ../../out/ustancebr/pred/zero_shot/Llama_4bit_bo_v0 -l 2300
 # python train_model.py -m predict -c ../../config/Llama_4bit_example.txt  -p ../../../data/ustancebr/v2/simple_domain/final_bo_test.csv -o ../../out/ustancebr/pred/zero_shot/Llama_4bit_bo_v0 -u ../../out/ustancebr/pred/zero_shot/Llama_4bit_bo_v0/llama_cpp_pred_checkpoints/Llama_4bit_ustancebr_full.ckp
 # python train_model.py -m eval  -c ../../config/Llama_4bit_example.txt  -p ../../../data/ustancebr/v2/simple_domain/final_bo_test.csv -o ../../out/ustancebr/pred/zero_shot/Llama_4bit_bo_v0 -u ../../out/ustancebr/pred/zero_shot/Llama_4bit_bo_v0/llama_cpp_pred_checkpoints/Llama_4bit_ustancebr_full.ckp
+
+# predict llama_4bit (Few-Shot) - SEMEVAL
+# python train_model.py -m predict -c ../../config/semeval/few_shot/Llama_4bit_v0.txt -t ../../data/semeval/simple_domain/final_hc_train.csv -p ../../data/semeval/simple_domain/final_hc_test.csv -o ../../out/semeval/pred/few_shot/Llama_4bit_hc_v0 -a 10
+# python train_model.py -m predict -c ../../config/semeval/few_shot/Llama_4bit_v0.txt -t ../../data/semeval/simple_domain/final_hc_train.csv -p ../../data/semeval/simple_domain/final_hc_test.csv -o ../../out/semeval/pred/few_shot/Llama_4bit_hc_v0 -u ../../out/semeval/pred/few_shot/Llama_4bit_hc_v0/llama_cpp_pred_checkpoints/Llama_4bit_semeval_full.ckp -a 10
 
 # predict llama_8bit
 # python train_model.py -m predict -c ../../config/Llama_8bit_example.txt  -p ../../../data/ustancebr/v2/simple_domain/final_bo_test.csv -o ../../out/ustancebr/pred/Llama_4bit_bo_v0

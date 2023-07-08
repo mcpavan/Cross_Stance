@@ -1,0 +1,3 @@
+Stance in text is different than sentiment becuase Stance is the attitude of the author of a text towards a given target. In this scenatio, a stance can be in favor or against the target. Given a text it is possible to identify the stance of the author torwards a target by generating a score between 0 and 10 where 0 means that the text is totally against of the target, 10 means the text is totally in favor of the target, and 5 means the text is neutral torwards the target or conveys no stance at all, in the format `x/10`.
+
+For example, for the text "{text}" and target "{topic}" the stance score would be

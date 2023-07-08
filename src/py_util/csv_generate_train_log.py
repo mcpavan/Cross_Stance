@@ -36,6 +36,8 @@ for data_, metric_, class_ in product(data_list, metric_list, class_list):
 
 for log_file_path in tqdm(glob(f"{log_base_path}/**/*.txt", recursive=True)):
     log_file_path = log_file_path.replace("\\", "/")
+    if log_file_path.endswith("old.txt"):
+        continue
     data_folder = log_file_path.replace(f"{log_base_path}/", "").split("/")[0]
     saved_file_name = log_file_path.replace(f"{log_base_path}/", "").split("/")[-1]
     source_topic = saved_file_name.split("_")[0]
