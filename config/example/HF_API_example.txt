@@ -1,0 +1,17 @@
+name:HF_API_ustancebr_
+model_type:hf_api
+api_url:https://api-inference.huggingface.co/models/bigscience/bloom
+auth_token:
+prompt_template_file:../../data/ustancebr/prompts/stance_prompt_alpaca_score10_0.md
+text_col:Text
+topic_col:Target
+label_col:Polarity
+sample_weights:1
+batch_size:1
+n_output_classes:2
+ckp_path:../../checkpoints/ustancebr/V0/
+save_every_n_batches:100
+epochs:1
+output_format:score
+output_max_score:10
+output_err_default:0.0

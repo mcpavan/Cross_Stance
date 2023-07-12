@@ -1,4 +1,4 @@
-# from copy import deepcopy
+from copy import deepcopy
 import torch
 import torch.nn as nn
 import model_layers as ml
@@ -188,70 +188,61 @@ class BiLSTMAttentionModel(torch.nn.Module):
 
         return y_pred
 
-# class MixtureOfExpertsModel(torch.nn.Module):
-#     # '''
-#     # Text -> Embedding -> Experts -> Dense -> Softmax
-#     # '''
+class EnsembleModel(torch.nn.Module):
+    # '''
+    # Text -> Embedding -> gating model (bilstmattn/bilstmjointattn/crossnet/bicond) -> CLF_Weights
+    # CLF_Weights * clf_preds -> final ensemble pred
+    # '''
 
-#     def __init__(self, n_experts=3, experts_params=None, gating_params=None, num_labels=3, use_cuda=False):
-#         super(MixtureOfExpertsModel, self).__init__()
+    def __init__(self, gating_params=None, num_labels=3, use_cuda=False):
+        super(EnsembleModel, self).__init__()
         
-#         self.use_cuda = use_cuda
-#         self.n_experts = n_experts
-#         self.num_labels = num_labels
-#         self.output_dim = 1 if self.num_labels == 2 else self.num_labels
-#         self.expert_models = []
+        self.use_cuda = use_cuda
+        self.n_clfs = 2
+        self.num_labels = num_labels
+        self.output_dim = 1 if self.num_labels == 2 else self.num_labels
+        self.is_ensemble = True
+        new_gating_params_ = deepcopy(gating_params)
+        new_gating_params_["use_cuda"] = self.use_cuda
+        new_gating_params_["num_labels"] = self.n_clfs*self.output_dim
+        del new_gating_params_["model_type"]
 
-#         if isinstance(experts_params, dict):
-#             experts_params = [experts_params] * self.n_experts
-#         elif not isinstance(experts_params, list):
-#             raise ValueError(f"Please use a list or a dict as `experts_params` value. Type received: {type(experts_params)}")
+        self.gating = get_model_class_and_params(
+            gating_params["model_type"],
+            new_gating_params_
+        )
+
+    def forward(self, text_embeddings, text_length, topic_embeddings=None, topic_length=None, clf1_pred=None, clf2_pred=None):
+        input_params = {
+            "text_embeddings": text_embeddings, # (T, B, E)
+            "text_length": text_length,
+        }
         
-#         if len(experts_params) != int(self.n_experts):
-#             raise ValueError(f"Please use 1 or {self.n_experts} dicts in `experts_params` value. Received: {len(experts_params)}")
-
-#         for expert_params_ in experts_params:
-#             new_expert_params_ = deepcopy(expert_params_)
-#             new_expert_params_["use_cuda"] = self.use_cuda
-#             new_expert_params_["num_labels"] = self.num_labels
-#             del new_expert_params_["model_type"]
-            
-#             self.expert_models += [
-#                 get_model_class_and_params(
-#                     expert_params_["model_type"],
-#                     new_expert_params_
-#                 )
-#             ]
+        if topic_embeddings is not None:
+            input_params["topic_embeddings"] = topic_embeddings # (C, B, E)
+            input_params["topic_length"] = topic_length
         
-#         new_gating_params_ = deepcopy(gating_params)
-#         new_gating_params_["use_cuda"] = self.use_cuda
-#         new_gating_params_["num_labels"] = self.n_experts
-#         del new_gating_params_["model_type"]
+        # print("input_params", input_params)
+        gating_pred = self.gating.forward(**input_params) # (B, n_clfs*output_dim)
+        if self.n_clfs*self.output_dim == 2:
+            gating_pred = torch.cat([gating_pred, 1-gating_pred], dim=1) #(B, 2)
 
-#         self.gating = get_model_class_and_params(
-#             gating_params["model_type"],
-#             new_gating_params_
-#         )
-
-#     def forward(self, text_embeddings, text_length, topic_embeddings=None, topic_length=None):
-#         input_params = {
-#             "text_embeddings": text_embeddings.transpose(0, 1), # (T, B, E)
-#             "text_length": text_length,
-#         }
-#         if topic_embeddings is not None:
-#             input_params["topic_embeddings"] = topic_embeddings.transpose(0, 1) # (C, B, E)
-#             input_params["topic_length"] = topic_length
+        gating_pred = gating_pred.reshape(-1, self.n_clfs, self.output_dim) #(B, n_clf, output_dim)
         
-#         print(input_params)
-#         gating_pred = self.gating.forward(**input_params) # (n_experts,)
-#         expert_pred = []
-#         for expert_model_ in self.expert_models:
-#             expert_model_ += [expert_model_.forward(**input_params)]
-#         expert_pred = torch.cat(expert_pred) # (n_experts, n_outputs)
+        # print("gating_pred", gating_pred)
 
-#         y_pred = expert_pred.dot(gating_pred) #(n_outputs,)
-
-#         return y_pred
+        # print("clf1_pred", clf1_pred)
+        # print("clf2_pred", clf2_pred)
+        # print()
+        clf_pred = torch.stack([clf1_pred, clf2_pred], dim=1).reshape(-1, self.n_clfs, self.output_dim) # (n_clfs, n_outputs)
+        if self.use_cuda:
+            clf_pred = clf_pred.to("cuda")
+        # print("clf_pred", clf_pred)
+        # print("clf_pred.device", clf_pred.device)
+        # print("gating_pred.device", gating_pred.device)
+        y_pred = clf_pred.multiply(gating_pred).sum(dim=1) #(n_outputs,)
+        # print("y_pred", y_pred)
+        return y_pred
 
 
 class CrossNet(torch.nn.Module):

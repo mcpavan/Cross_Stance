@@ -2,6 +2,7 @@ import numpy as np
 import pandas as pd
 import time
 import torch
+import ast
 
 from collections import Counter
 from torch.utils.data import Dataset
@@ -34,6 +35,9 @@ class BertStanceDataset(Dataset):
         :param tokenizer_params: dict of parameters passed to the tokenizer loader
         :param alpha_load_classes: Weather to load classes (target and topic) in alphabetical order.
                indicated to the cases where there are different sizes of strata in the train/valid/test sets.
+        :param ensemble_clf1_pred_file: path to csv data file containing the predictions from the 1st classifier
+        :param ensemble_clf2_pred_file: path to csv data file containing the predictions from the 2nd classifier
+        :param ensemble_usescores: whether the ensemble will use the scores (True) or the class predictions (False)
         """
 
         skip_rows = kwargs.get("skip_rows")
@@ -49,6 +53,58 @@ class BertStanceDataset(Dataset):
         self.text_col = kwargs["text_col"]
         self.topic_col = kwargs["topic_col"]
         self.label_col = kwargs["label_col"]
+
+        ensemble_clf1_pred_file = kwargs.get("ensemble_clf1_pred_file")
+        ensemble_clf2_pred_file = kwargs.get("ensemble_clf2_pred_file")
+        self.is_ensemble = False
+
+        if ensemble_clf1_pred_file is not None and ensemble_clf2_pred_file is not None:
+            self.use_scores = kwargs.get("ensemble_usescores", False)
+            self.is_ensemble = True
+            
+            if self.use_scores:
+                pred_col = f"{self.label_col}_proba"
+            else:
+                pred_col = f"{self.label_col}_pred"
+            
+            index_list_ = [self.text_col, self.topic_col, self.label_col]
+            pred1 = pd.read_csv(
+                ensemble_clf1_pred_file,
+                **kwargs["pd_read_kwargs"],
+                skiprows=skip_rows
+            ).set_index(index_list_)[pred_col]#, f"{self.label_col}_proba"]
+            
+            pred2 = pd.read_csv(
+                ensemble_clf2_pred_file,
+                **kwargs["pd_read_kwargs"],
+                skiprows=skip_rows
+            ).set_index(index_list_)[pred_col]#, f"{self.label_col}_proba"]
+
+            if self.use_scores:
+                
+                def process_scores(x):
+                    if isinstance(x, str):
+                        x = x.replace("tensor","").replace("(", "").replace(")", "")
+                        x = ast.literal_eval(x)
+                        
+                    if isinstance(x, float):
+                        x=[x]
+                    
+                    return x
+                
+                pred1 = pred1.apply(process_scores)
+                pred2 = pred2.apply(process_scores)
+
+            # making sure all instances are in the same order
+            self.df = self.df \
+                .reset_index(drop=False) \
+                .set_index(index_list_)
+            self.df[f"{self.label_col}_pred_1"] = pred1
+            self.df[f"{self.label_col}_pred_2"] = pred2
+            self.df = self.df \
+                .reset_index(drop=False) \
+                .set_index("index")
+            self.df.index.name = None
 
         self.data_sample = float(kwargs.get("data_sample", "1"))
         self.random_state = int(kwargs.get("random_state", "123"))
@@ -75,6 +131,13 @@ class BertStanceDataset(Dataset):
         
         self.tgt2vec, self.vec2tgt, self.tgt_cnt = create_tgt_lookup_tables(self.df[self.label_col], alpha_order=kwargs.get("alpha_load_classes", False))
         self.df["vec_target"] = [self.convert_lbl_to_vec(tgt, self.tgt2vec) for tgt in self.df[self.label_col]]
+        if self.is_ensemble:
+            if self.use_scores:
+                self.df["vec_target_pred_1"] = self.df[f"{self.label_col}_pred_1"]
+                self.df["vec_target_pred_2"] = self.df[f"{self.label_col}_pred_2"]
+            else:
+                self.df["vec_target_pred_1"] = [self.convert_lbl_to_vec(tgt, self.tgt2vec) for tgt in self.df[f"{self.label_col}_pred_1"]]
+                self.df["vec_target_pred_2"] = [self.convert_lbl_to_vec(tgt, self.tgt2vec) for tgt in self.df[f"{self.label_col}_pred_2"]]
         self.n_labels = len(self.tgt_cnt)
 
         self.topic2vec, self.vec2topic, self.topic_cnt = create_tgt_lookup_tables(self.df[self.topic_col], alpha_order=kwargs.get("alpha_load_classes", False))
@@ -246,6 +309,10 @@ class BertStanceDataset(Dataset):
         
         if self.sample_weights:
             return_dict["sample_weight"] = self.df.loc[index, "weight"]
+        
+        if self.is_ensemble:
+            return_dict["pred_label_1"] = self.df.loc[index, "vec_target_pred_1"]
+            return_dict["pred_label_2"] = self.df.loc[index, "vec_target_pred_2"]
 
         return return_dict
     

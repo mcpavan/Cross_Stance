@@ -21,6 +21,8 @@ class TorchModelHandler:
         self.num_labels = self.model.num_labels
         # self.output_dim = 1 if self.num_labels < 1 else self.num_labels
         self.output_dim = self.model.output_dim
+        self.is_ensemble = self.model.is_ensemble if hasattr(self.model, "is_ensemble") else False
+
         self.name = params["name"]
         
         self.loss_function = params["loss_function"]
@@ -98,7 +100,7 @@ class TorchModelHandler:
             label_tensor = torch.stack(batch_data["label"]).T.type(torch.FloatTensor)
             if len(label_tensor.shape) > 1 and label_tensor.shape[-1] != 1:
                 label_tensor = label_tensor.argmax(dim=1).reshape(-1,1)
-            label_tensor = label_tensor.squeeze()
+            label_tensor = label_tensor.squeeze(dim=-1)
             
             if self.use_cuda:
                 label_tensor = label_tensor.to("cuda")
@@ -123,12 +125,30 @@ class TorchModelHandler:
                         "topic_embeddings": topic_embeddings,
                         "topic_length": batch_data["topic"]["input_length"],
                     })
-                
-            #apply the text and topic embeddings to the model
+            
+            if self.is_ensemble:
+                clf_pred_label_1_tensor = torch.stack(batch_data["pred_label_1"]).T.type(torch.FloatTensor)
+                if len(clf_pred_label_1_tensor.shape) > 1 and clf_pred_label_1_tensor.shape[-1] != 1:
+                    clf_pred_label_1_tensor = clf_pred_label_1_tensor.argmax(dim=1).reshape(-1,1)
+                clf_pred_label_1_tensor = clf_pred_label_1_tensor.squeeze(dim=-1)
+
+                clf_pred_label_2_tensor = torch.stack(batch_data["pred_label_2"]).T.type(torch.FloatTensor)
+                if len(clf_pred_label_2_tensor.shape) > 1 and clf_pred_label_2_tensor.shape[-1] != 1:
+                    clf_pred_label_2_tensor = clf_pred_label_2_tensor.argmax(dim=1).reshape(-1,1)
+                clf_pred_label_2_tensor = clf_pred_label_2_tensor.squeeze(dim=-1)
+
+                model_inputs.update({
+                    "clf1_pred": clf_pred_label_1_tensor,
+                    "clf2_pred": clf_pred_label_2_tensor,
+                })
+            
+            #apply the text and topic embeddings (and clf predictions if applicable) to the model
             y_pred = self.model(**model_inputs)
+            if y_pred.squeeze(dim=-1).shape != torch.Size([]):
+                y_pred = y_pred.squeeze(dim=-1)
 
             # calculate the loss, and backprogate it to update weights
-            graph_loss = self.loss_function(y_pred.squeeze(), label_tensor)
+            graph_loss = self.loss_function(y_pred, label_tensor)
             if "sample_weight" in batch_data:
                 weight_lst = batch_data["sample_weight"]
                 if self.use_cuda:
@@ -249,7 +269,7 @@ class TorchModelHandler:
                 label_tensor = torch.stack(batch_data["label"]).T.type(torch.FloatTensor)
                 if len(label_tensor.shape) > 1 and label_tensor.shape[-1] != 1:
                     label_tensor = label_tensor.argmax(dim=1).reshape(-1,1)
-                label_tensor = label_tensor.squeeze()
+                label_tensor = label_tensor.squeeze(dim=-1)
 
                 all_labels = torch.cat((all_labels, label_tensor))
                 if self.use_cuda:
@@ -273,12 +293,31 @@ class TorchModelHandler:
                             "topic_embeddings": topic_embeddings,
                             "topic_length": batch_data["topic"]["input_length"]
                         })
-                    
+                
+                if self.is_ensemble:
+                    clf_pred_label_1_tensor = torch.stack(batch_data["pred_label_1"]).T.type(torch.FloatTensor)
+                    if len(clf_pred_label_1_tensor.shape) > 1 and clf_pred_label_1_tensor.shape[-1] != 1:
+                        clf_pred_label_1_tensor = clf_pred_label_1_tensor.argmax(dim=1).reshape(-1,1)
+                    clf_pred_label_1_tensor = clf_pred_label_1_tensor.squeeze(dim=-1)
+
+                    clf_pred_label_2_tensor = torch.stack(batch_data["pred_label_2"]).T.type(torch.FloatTensor)
+                    if len(clf_pred_label_2_tensor.shape) > 1 and clf_pred_label_2_tensor.shape[-1] != 1:
+                        clf_pred_label_2_tensor = clf_pred_label_2_tensor.argmax(dim=1).reshape(-1,1)
+                    clf_pred_label_2_tensor = clf_pred_label_2_tensor.squeeze(dim=-1)
+
+                    model_inputs.update({
+                        "clf1_pred": clf_pred_label_1_tensor,
+                        "clf2_pred": clf_pred_label_2_tensor,
+                    })
+                
                 y_pred = self.model(**model_inputs)
+                if y_pred.squeeze(dim=-1).shape != torch.Size([]):
+                    y_pred = y_pred.squeeze(dim=-1)
+
                 # if self.use_cuda:
                 all_y_pred = torch.cat((all_y_pred, y_pred.cpu()))
                 
-                graph_loss = self.loss_function(y_pred.squeeze(), label_tensor)
+                graph_loss = self.loss_function(y_pred, label_tensor)
                 if "sample_weight" in batch_data:
                     weight_lst = batch_data["sample_weight"]
                     if self.use_cuda:

@@ -46,7 +46,10 @@ def load_data(config, args, data_key="trn", trn_data=None):
             random_state = int(args.get("random_state", 123)),
             tokenizer_params = tokenizer_params,
             skip_rows = args.get(f"skip_rows_{data_key}"),
-            alpha_load_classes = args.get("alpha_load_classes", False),
+            alpha_load_classes = bool(args.get("alpha_load_classes", "0")),
+            ensemble_clf1_pred_file = args.get(f"ensemble_clf1_pred_{data_key}"),
+            ensemble_clf2_pred_file = args.get(f"ensemble_clf2_pred_{data_key}"),
+            ensemble_usescores = bool(config.get("ensemble_usescores", "0")),
         )
     elif config.get("model_type", "").lower() in ["llama_cpp", "hf_llm", "hf_api"]:
         needs_few_shot_examples = int(config.get("needs_few_shot_examples", "0"))
@@ -64,7 +67,7 @@ def load_data(config, args, data_key="trn", trn_data=None):
             model_type = config.get("model_type", "").lower(),
             tokenizer_params = tokenizer_params,
             skip_rows = args.get(f"skip_rows_{data_key}"),
-            alpha_load_classes = args.get("alpha_load_classes", False),
+            alpha_load_classes = bool(args.get("alpha_load_classes", "0")),
             sentence_model_name = config.get("sentence_model_name") if needs_few_shot_examples else None,
             n_similar_sentences = config.get("n_similar_sentences") if needs_few_shot_examples else None,
             train_dataset = trn_data if needs_few_shot_examples else None,
@@ -665,78 +668,78 @@ def main(args):
             **kwargs
         )
 
-    # elif "mixture" in config["name"].lower():
-    #     text_input_layer = input_models.BertLayer(
-    #         use_cuda=use_cuda,
-    #         pretrained_model_name=config.get("bert_pretrained_model", "bert-base-uncased"),
-    #         layers=config.get("bert_layers", "-1"),
-    #         layers_agg_type=config.get("bert_layers_agg", "concat"),
-    #     )
+    elif "ensemble" in config["name"].lower():
+        text_input_layer = input_models.BertLayer(
+            use_cuda=use_cuda,
+            pretrained_model_name=config.get("bert_pretrained_model", "bert-base-uncased"),
+            layers=config.get("bert_layers", "-1"),
+            layers_agg_type=config.get("bert_layers_agg", "concat"),
+        )
 
-    #     topic_input_layer = input_models.BertLayer(
-    #         use_cuda=use_cuda,
-    #         pretrained_model_name=config.get("bert_pretrained_model", "bert-base-uncased"),
-    #         layers=config.get("bert_layers", "-1"),
-    #         layers_agg_type=config.get("bert_layers_agg", "concat"),
-    #     )
+        base_params_dict = {
+            "text_input_dim": text_input_layer.dim,
+        }
+        if config["gating_model_type"].lower() != "bilstmattn":
+            topic_input_layer = input_models.BertLayer(
+                use_cuda=use_cuda,
+                pretrained_model_name=config.get("bert_pretrained_model", "bert-base-uncased"),
+                layers=config.get("bert_layers", "-1"),
+                layers_agg_type=config.get("bert_layers_agg", "concat"),
+            )
+            base_params_dict["topic_input_dim"] = topic_input_layer.dim
+        else:
+            topic_input_layer = None
         
-    #     loss_reduction = "none" if bool(int(config.get("sample_weights", "0"))) else "mean"
-    #     if nl < 3:
-    #         loss_fn = torch.nn.BCELoss(reduction=loss_reduction)
-    #     else:
-    #         loss_fn = torch.nn.CrossEntropyLoss(reduction=loss_reduction)#ignore_index=nl)
+        loss_reduction = "none" if bool(int(config.get("sample_weights", "0"))) else "mean"
+        if nl < 3:
+            loss_fn = torch.nn.BCELoss(reduction=loss_reduction)
+        else:
+            loss_fn = torch.nn.CrossEntropyLoss(reduction=loss_reduction)#ignore_index=nl)
+
+        # n_clfs = 2#int(config.get("n_experts", 3))
+        # expert_params = [copy.deepcopy(base_params_dict) for _ in range(n_experts)]
+        gating_params = copy.deepcopy(base_params_dict)
         
-    #     base_params_dict = {
-    #         "text_input_dim": text_input_layer.dim,
-    #         "topic_input_dim": topic_input_layer.dim,
-    #     }
+        for key, value in config.items():
+            if key.startswith("gating_"):
+                gating_params[key.replace("gating_", "")] = value
+            # elif key.startswith("expert_"):
+            #     expert_number = int(key.split("_")[1])
+            #     expert_params[expert_number-1][key.replace(f"expert_{expert_number}_", "")] = value
 
-    #     n_experts = int(config.get("n_experts", 3))
-    #     expert_params = [copy.deepcopy(base_params_dict) for _ in range(n_experts)]
-    #     gating_params = copy.deepcopy(base_params_dict)
-        
-    #     for key, value in config.items():
-    #         if key.startswith("gating_"):
-    #             gating_params[key.replace("gating_", "")] = value
-    #         elif key.startswith("expert_"):
-    #             expert_number = int(key.split("_")[1])
-    #             expert_params[expert_number-1][key.replace(f"expert_{expert_number}_", "")] = value
+        model = models.EnsembleModel(
+            gating_params=gating_params,
+            num_labels=nl,
+            use_cuda=use_cuda,
+        )
 
-    #     model = models.MixtureOfExpertsModel(
-    #         n_experts=config.get("n_experts", 3),
-    #         experts_params=expert_params,
-    #         gating_params=gating_params,
-    #         num_labels=nl,
-    #         use_cuda=use_cuda,
-    #     )
+        o = torch.optim.Adam(
+            model.parameters(),
+            lr=lr
+        )
 
-    #     o = torch.optim.Adam(
-    #         model.parameters(),
-    #         lr=lr
-    #     )
+        scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(
+            optimizer=o,
+            patience=2,
+        )
 
-    #     scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(
-    #         optimizer=o,
-    #         patience=2,
-    #     )
+        kwargs = {
+            'model': model,
+            'text_input_model': text_input_layer,
+            'topic_input_model': topic_input_layer,
+            'dataloader': trn_dataloader,
+            'name': config['name'] + args['name'],
+            'loss_function': loss_fn,
+            'optimizer': o,
+            'scheduler': scheduler,
+            'is_joint_text_topic':config.get("is_joint"),
+        }
 
-    #     kwargs = {
-    #         'model': model,
-    #         'text_input_model': text_input_layer,
-    #         'topic_input_model': topic_input_layer,
-    #         'dataloader': trn_dataloader,
-    #         'name': config['name'] + args['name'],
-    #         'loss_function': loss_fn,
-    #         'optimizer': o,
-    #         'scheduler': scheduler,
-    #         'is_joint_text_topic':config.get("is_joint"),
-    #     }
-
-    #     model_handler = model_utils.TorchModelHandler(
-    #         checkpoint_path=config.get('ckp_path', 'data/checkpoints/'),
-    #         use_cuda=use_cuda,
-    #         **kwargs
-    #     )
+        model_handler = model_utils.TorchModelHandler(
+            checkpoint_path=config.get('ckp_path', 'data/checkpoints/'),
+            use_cuda=use_cuda,
+            **kwargs
+        )
 
     elif 'CrossNet' in config['name']:
         text_input_layer = input_models.BertLayer(
@@ -1292,6 +1295,12 @@ if __name__ == "__main__":
     parser.add_argument('-u', '--tst_results', type=str, dest="tst_results", help="Path to file containing the test results. (predictions)", default="")
     parser.add_argument('-w', '--vld_results', type=str, dest="vld_results", help="Path to file containing the validation results. (predictions)", default="")
     parser.add_argument('-x', '--trn_results', type=str, dest="trn_results", help="Path to file containing the train results. (predictions)", default="")
+    parser.add_argument('-bt1', '--ensemble_clf1_pred_trn', type=str, dest="ensemble_clf1_pred_trn", help="Path to file containing the 1st classifier predictions on train data.", default=None)
+    parser.add_argument('-bt2', '--ensemble_clf2_pred_trn', type=str, dest="ensemble_clf2_pred_trn", help="Path to file containing the 2nd classifier predictions on train data.", default=None)
+    parser.add_argument('-bv1', '--ensemble_clf1_pred_vld', type=str, dest="ensemble_clf1_pred_vld", help="Path to file containing the 1st classifier predictions on validation data.", default=None)
+    parser.add_argument('-bv2', '--ensemble_clf2_pred_vld', type=str, dest="ensemble_clf2_pred_vld", help="Path to file containing the 2nd classifier predictions on validation data.", default=None)
+    parser.add_argument('-bp1', '--ensemble_clf1_pred_tst', type=str, dest="ensemble_clf1_pred_tst", help="Path to file containing the 1st classifier predictions on test data.", default=None)
+    parser.add_argument('-bp2', '--ensemble_clf2_pred_tst', type=str, dest="ensemble_clf2_pred_tst", help="Path to file containing the 2nd classifier predictions on test data.", default=None)
 
     args = vars(parser.parse_args())
 
@@ -1301,68 +1310,68 @@ if __name__ == "__main__":
 
 ## LOCAL
 # train BiCondBertLstm
-# python train_model.py -m train -c ../../config/BiCondBertLstm_example.txt -t ../../../data/ustancebr/v2/hold1topic_out/final_bo_train.csv -v ../../../data/ustancebr/v2/hold1topic_out/final_bo_valid.csv -n bo -e 5 -s 1
-# python train_model.py -m train -c ../../config/BiCondBertLstm_example.txt -t ../../../data/ustancebr/v2/hold1topic_out/final_bo_test.csv -v ../../../data/ustancebr/v2/hold1topic_out/final_bo_test.csv -n bo -e 5 -s 1
+# python train_model.py -m train -c ../../config/BiCondBertLstm_example.txt -t ../../data/ustancebr/v2/hold1topic_out/final_bo_train.csv -v ../../data/ustancebr/v2/hold1topic_out/final_bo_valid.csv -n bo -e 5 -s 1
+# python train_model.py -m train -c ../../config/BiCondBertLstm_example.txt -t ../../data/ustancebr/v2/hold1topic_out/final_bo_test.csv -v ../../data/ustancebr/v2/hold1topic_out/final_bo_test.csv -n bo -e 5 -s 1
 
 
 # train BertBiLSTMJointAttn
-# python train_model.py -m train -c ../../config/Bert_BiLstmJointAttn_example.txt -t ../../../data/ustancebr/v2/hold1topic_out/final_bo_train.csv -v ../../../data/ustancebr/v2/hold1topic_out/final_bo_valid.csv -p ../../../data/ustancebr/v2/hold1topic_out/final_bo_test.csv -n bo -e 5 -s 1
-# python train_model.py -m train -c ../../config/Bert_BiLstmJointAttn_example.txt -t ../../../data/ustancebr/v2/hold1topic_out/final_bo_test.csv -v ../../../data/ustancebr/v2/hold1topic_out/final_bo_test.csv -p ../../../data/ustancebr/v2/hold1topic_out/final_bo_test.csv -n bo -e 5 -s 1
+# python train_model.py -m train -c ../../config/Bert_BiLstmJointAttn_example.txt -t ../../data/ustancebr/v2/hold1topic_out/final_bo_train.csv -v ../../data/ustancebr/v2/hold1topic_out/final_bo_valid.csv -p ../../data/ustancebr/v2/hold1topic_out/final_bo_test.csv -n bo -e 5 -s 1
+# python train_model.py -m train -c ../../config/Bert_BiLstmJointAttn_example.txt -t ../../data/ustancebr/v2/hold1topic_out/final_bo_test.csv -v ../../data/ustancebr/v2/hold1topic_out/final_bo_test.csv -p ../../data/ustancebr/v2/hold1topic_out/final_bo_test.csv -n bo -e 5 -s 1
 
 # train BertBiLSTMAttn (Simple Domain)
-# python train_model.py -m train -c ../../config/Bert_BiLstmAttn_example.txt -t ../../../data/ustancebr/v2/simple_domain/final_bo_train.csv -v ../../../data/ustancebr/v2/simple_domain/final_bo_valid.csv -p ../../../data/ustancebr/v2/simple_domain/final_bo_test.csv -n bo -e 5 -s 1
+# python train_model.py -m train -c ../../config/Bert_BiLstmAttn_example.txt -t ../../data/ustancebr/v2/simple_domain/final_bo_train.csv -v ../../data/ustancebr/v2/simple_domain/final_bo_valid.csv -p ../../data/ustancebr/v2/simple_domain/final_bo_test.csv -n bo -e 5 -s 1
 
 # predict BertBiLSTMAttn (Simple Domain)
-# python train_model.py -m predict -c ../../config/Bert_BiLstmAttn_example.txt  -p ../../../data/ustancebr/v2/simple_domain/final_bo_test.csv -f ../../checkpoints/ustancebr/V0/ckp-BertBiLSTMAttn_ustancebr_bo-BEST.tar -o ../../out/ustancebr/pred/BertBiLSTMAttn_bo_BEST_v0
-# -t ../../../data/ustancebr/v2/simple_domain/final_bo_train.csv -v ../../../data/ustancebr/v2/simple_domain/final_bo_valid.csv
+# python train_model.py -m predict -c ../../config/Bert_BiLstmAttn_example.txt  -p ../../data/ustancebr/v2/simple_domain/final_bo_test.csv -f ../../checkpoints/ustancebr/V0/ckp-BertBiLSTMAttn_ustancebr_bo-BEST.tar -o ../../out/ustancebr/pred/BertBiLSTMAttn_bo_BEST_v0
+# -t ../../data/ustancebr/v2/simple_domain/final_bo_train.csv -v ../../data/ustancebr/v2/simple_domain/final_bo_valid.csv
 
 # eval BertBiLSTMAttn (Simple Domain)
 # python train_model.py -m eval -c ../../config/simple_domain/Bert_BiLSTMAttn_v1.txt  -p ../../data/ustancebr/v2/simple_domain/final_bo_test.csv -f ../../checkpoints/ustancebr/simple_domain/V1/ckp-BertBiLSTMAttn_ustancebr_bo-BEST.tar -o ../../out/ustancebr/eval/BertBiLSTMAttn_bo_BEST_v1 -t ../../data/ustancebr/v2/simple_domain/final_bo_train.csv -v ../../data/ustancebr/v2/simple_domain/final_bo_valid.csv
 
-# train MixtureOfExperts (Simple Domain)
-# python train_model.py -m train -c ../../config/Bert_Mixture_example.txt -t ../../../data/ustancebr/v2/simple_domain/final_bo_train.csv -v ../../../data/ustancebr/v2/simple_domain/final_bo_valid.csv -p ../../../data/ustancebr/v2/simple_domain/final_bo_test.csv -n bo -e 5 -s 1
+# train Ensemble (Hold1TopicOut)
+# python train_model.py -m train -c ../../config/example/Bert_Ensemble_example.txt -t ../../data/ustancebr/v2/teste_pqno_h1to/pqno_bo_train.csv -v ../../data/ustancebr/v2/teste_pqno_h1to/pqno_bo_valid.csv -p ../../data/ustancebr/v2/teste_pqno_h1to/pqno_bo_test.csv -n bo -e 5 -s 1 -bt1 ../../data/ustancebr/v2/teste_pqno_h1to/clf_1_pred_pqno_bo_train.csv -bt2 ../../data/ustancebr/v2/teste_pqno_h1to/clf_2_pred_pqno_bo_train.csv -bv1 ../../data/ustancebr/v2/teste_pqno_h1to/clf_1_pred_pqno_bo_valid.csv -bv2 ../../data/ustancebr/v2/teste_pqno_h1to/clf_2_pred_pqno_bo_valid.csv -bp1 ../../data/ustancebr/v2/teste_pqno_h1to/clf_1_pred_pqno_bo_test.csv -bp2 ../../data/ustancebr/v2/teste_pqno_h1to/clf_2_pred_pqno_bo_test.csv
 
 # train CrossNet (Simple Domain)
-# python train_model.py -m train -c ../../config/Bert_CrossNet_example.txt -t ../../../data/ustancebr/v2/simple_domain/final_bo_train.csv -v ../../../data/ustancebr/v2/simple_domain/final_bo_valid.csv -p ../../../data/ustancebr/v2/simple_domain/final_bo_test.csv -n bo -e 2 -s 1
+# python train_model.py -m train -c ../../config/Bert_CrossNet_example.txt -t ../../data/ustancebr/v2/simple_domain/final_bo_train.csv -v ../../data/ustancebr/v2/simple_domain/final_bo_valid.csv -p ../../data/ustancebr/v2/simple_domain/final_bo_test.csv -n bo -e 2 -s 1
 
 # train TOAD (Hold1TopicOut)
-# python train_model.py -m train -c ../../config/Bert_TOAD_example.txt -t ../../../data/ustancebr/v2/hold1topic_out/final_bo_train.csv -v ../../../data/ustancebr/v2/hold1topic_out/final_bo_valid.csv -p ../../../data/ustancebr/v2/hold1topic_out/final_bo_test.csv -n bo -e 2 -s 1
+# python train_model.py -m train -c ../../config/Bert_TOAD_example.txt -t ../../data/ustancebr/v2/hold1topic_out/final_bo_train.csv -v ../../data/ustancebr/v2/hold1topic_out/final_bo_valid.csv -p ../../data/ustancebr/v2/hold1topic_out/final_bo_test.csv -n bo -e 2 -s 1
 # python train_model.py -m train -c ../../config/Bert_TOAD_example.txt -t ../../data/ustancebr/v2/teste_pqno_h1to/pqno_bo_train.csv -v ../../data/ustancebr/v2/teste_pqno_h1to/pqno_bo_test.csv -p ../../data/ustancebr/v2/teste_pqno_h1to/pqno_bo_test.csv -n bo -e 2
 
 # train TOAD (SEMEVAL Hold1TopicOut)
-# python train_model.py -m train -c ../../config/Bert_TOAD_example_Semeval.txt -t ../../../data/semeval/hold1topic_out/final_dt_train.csv -v ../../../data/semeval/hold1topic_out/final_dt_valid.csv -p ../../../data/semeval/hold1topic_out/final_dt_test.csv -n dt -e 2 -s 1
+# python train_model.py -m train -c ../../config/Bert_TOAD_example_Semeval.txt -t ../../data/semeval/hold1topic_out/final_dt_train.csv -v ../../data/semeval/hold1topic_out/final_dt_valid.csv -p ../../data/semeval/hold1topic_out/final_dt_test.csv -n dt -e 2 -s 1
 
 # train TOAD (SEMEVAL indomain)
-# python train_model.py -m train -c ../../config/Bert_TOAD_example_Semeval.txt -t ../../../data/semeval/indomain/final_hc_train.csv -v ../../../data/semeval/indomain/final_hc_valid.csv -p ../../../data/semeval/indomain/final_hc_test.csv -n hc -e 2 -s 1
+# python train_model.py -m train -c ../../config/Bert_TOAD_example_Semeval.txt -t ../../data/semeval/indomain/final_hc_train.csv -v ../../data/semeval/indomain/final_hc_valid.csv -p ../../data/semeval/indomain/final_hc_test.csv -n hc -e 2 -s 1
 
 # train AAD (Simple Domain)
 # python train_model.py -m train -c ../../config/Bert_AAD_example.txt -t ../../data/ustancebr/v2/simple_domain/final_lu_train.csv -g ../../data/ustancebr/v2/simple_domain/final_bo_train.csv -v ../../data/ustancebr/v2/simple_domain/final_bo_valid.csv -p ../../data/ustancebr/v2/simple_domain/final_bo_test.csv -n bo -e 2 -s 1
 # python train_model.py -m train -c ../../config/Bert_AAD_example.txt -t ../../data/ustancebr/v2/teste_pqno/pqno_lu_train.csv -g ../../data/ustancebr/v2/teste_pqno/pqno_bo_train.csv -v ../../data/ustancebr/v2/teste_pqno/pqno_bo_train.csv -p ../../data/ustancebr/v2/teste_pqno/pqno_bo_test.csv -n bo -e 2 -s 1
 
 # train JointCL (ustancebr Simple Domain)
-# python train_model.py -m train -c ../../config/Bert_JointCL_example.txt -t ../../../data/ustancebr/v2/simple_domain/final_bo_train.csv -v ../../../data/ustancebr/v2/simple_domain/final_bo_valid.csv -p ../../../data/ustancebr/v2/simple_domain/final_bo_test.csv -n bo -e 2 -s 1
+# python train_model.py -m train -c ../../config/Bert_JointCL_example.txt -t ../../data/ustancebr/v2/simple_domain/final_bo_train.csv -v ../../data/ustancebr/v2/simple_domain/final_bo_valid.csv -p ../../data/ustancebr/v2/simple_domain/final_bo_test.csv -n bo -e 2 -s 1
 # train JointCL (ustancebr Hold1TopicOut)
-# python train_model.py -m train -c ../../config/Bert_JointCL_example.txt -t ../../../data/ustancebr/v2/hold1topic_out/final_bo_train.csv -v ../../../data/ustancebr/v2/hold1topic_out/final_bo_valid.csv -p ../../../data/ustancebr/v2/hold1topic_out/final_bo_test.csv -n bo -e 2 -s 1
+# python train_model.py -m train -c ../../config/Bert_JointCL_example.txt -t ../../data/ustancebr/v2/hold1topic_out/final_bo_train.csv -v ../../data/ustancebr/v2/hold1topic_out/final_bo_valid.csv -p ../../data/ustancebr/v2/hold1topic_out/final_bo_test.csv -n bo -e 2 -s 1
 # train JointCL (ustancebr PQNO Hold1TopicOut)
 # python train_model.py -m train -c ../../config/Bert_JointCL_example.txt -t ../../data/ustancebr/v2/teste_pqno_h1to/pqno_bo_train.csv -v ../../data/ustancebr/v2/teste_pqno_h1to/pqno_bo_valid.csv -p ../../data/ustancebr/v2/teste_pqno_h1to/pqno_bo_test.csv -n bo -e 2
 
 # train JointCL (Semeval indomain)
-# python train_model.py -m train -c ../../config/Bert_JointCL_example_semeval.txt -t ../../../data/semeval/indomain/final_dt_train.csv -v ../../../data/semeval/indomain/final_dt_valid.csv -p ../../../data/semeval/indomain/final_dt_test.csv -n bo -e 2 -s 1
+# python train_model.py -m train -c ../../config/Bert_JointCL_example_semeval.txt -t ../../data/semeval/indomain/final_dt_train.csv -v ../../data/semeval/indomain/final_dt_valid.csv -p ../../data/semeval/indomain/final_dt_test.csv -n bo -e 2 -s 1
 # train JointCL (Semeval Hold1TopicOut)
-# python train_model.py -m train -c ../../config/Bert_JointCL_example_semeval.txt -t ../../../data/semeval/hold1topic_out/final_dt_train.csv -v ../../../data/semeval/hold1topic_out/final_dt_valid.csv -p ../../../data/semeval/hold1topic_out/final_dt_test.csv -n bo -e 2 -s 1
+# python train_model.py -m train -c ../../config/Bert_JointCL_example_semeval.txt -t ../../data/semeval/hold1topic_out/final_dt_train.csv -v ../../data/semeval/hold1topic_out/final_dt_valid.csv -p ../../data/semeval/hold1topic_out/final_dt_test.csv -n bo -e 2 -s 1
 
 # predict llama_4bit
-# python train_model.py -m predict -c ../../config/Llama_4bit_example.txt  -p ../../../data/ustancebr/v2/simple_domain/final_bo_test.csv -o ../../out/ustancebr/pred/zero_shot/Llama_4bit_bo_v0
-# python train_model.py -m predict -c ../../config/Llama_4bit_example.txt  -p ../../../data/ustancebr/v2/simple_domain/final_bo_test.csv -o ../../out/ustancebr/pred/zero_shot/Llama_4bit_bo_v0 -l 2300
-# python train_model.py -m predict -c ../../config/Llama_4bit_example.txt  -p ../../../data/ustancebr/v2/simple_domain/final_bo_test.csv -o ../../out/ustancebr/pred/zero_shot/Llama_4bit_bo_v0 -u ../../out/ustancebr/pred/zero_shot/Llama_4bit_bo_v0/llama_cpp_pred_checkpoints/Llama_4bit_ustancebr_full.ckp
-# python train_model.py -m eval  -c ../../config/Llama_4bit_example.txt  -p ../../../data/ustancebr/v2/simple_domain/final_bo_test.csv -o ../../out/ustancebr/pred/zero_shot/Llama_4bit_bo_v0 -u ../../out/ustancebr/pred/zero_shot/Llama_4bit_bo_v0/llama_cpp_pred_checkpoints/Llama_4bit_ustancebr_full.ckp
+# python train_model.py -m predict -c ../../config/Llama_4bit_example.txt  -p ../../data/ustancebr/v2/simple_domain/final_bo_test.csv -o ../../out/ustancebr/pred/zero_shot/Llama_4bit_bo_v0
+# python train_model.py -m predict -c ../../config/Llama_4bit_example.txt  -p ../../data/ustancebr/v2/simple_domain/final_bo_test.csv -o ../../out/ustancebr/pred/zero_shot/Llama_4bit_bo_v0 -l 2300
+# python train_model.py -m predict -c ../../config/Llama_4bit_example.txt  -p ../../data/ustancebr/v2/simple_domain/final_bo_test.csv -o ../../out/ustancebr/pred/zero_shot/Llama_4bit_bo_v0 -u ../../out/ustancebr/pred/zero_shot/Llama_4bit_bo_v0/llama_cpp_pred_checkpoints/Llama_4bit_ustancebr_full.ckp
+# python train_model.py -m eval  -c ../../config/Llama_4bit_example.txt  -p ../../data/ustancebr/v2/simple_domain/final_bo_test.csv -o ../../out/ustancebr/pred/zero_shot/Llama_4bit_bo_v0 -u ../../out/ustancebr/pred/zero_shot/Llama_4bit_bo_v0/llama_cpp_pred_checkpoints/Llama_4bit_ustancebr_full.ckp
 
 # predict llama_4bit (Few-Shot) - SEMEVAL
 # python train_model.py -m predict -c ../../config/semeval/few_shot/Llama_4bit_v0.txt -t ../../data/semeval/simple_domain/final_hc_train.csv -p ../../data/semeval/simple_domain/final_hc_test.csv -o ../../out/semeval/pred/few_shot/Llama_4bit_hc_v0 -a 10
 # python train_model.py -m predict -c ../../config/semeval/few_shot/Llama_4bit_v0.txt -t ../../data/semeval/simple_domain/final_hc_train.csv -p ../../data/semeval/simple_domain/final_hc_test.csv -o ../../out/semeval/pred/few_shot/Llama_4bit_hc_v0 -u ../../out/semeval/pred/few_shot/Llama_4bit_hc_v0/llama_cpp_pred_checkpoints/Llama_4bit_semeval_full.ckp -a 10
 
 # predict llama_8bit
-# python train_model.py -m predict -c ../../config/Llama_8bit_example.txt  -p ../../../data/ustancebr/v2/simple_domain/final_bo_test.csv -o ../../out/ustancebr/pred/Llama_4bit_bo_v0
+# python train_model.py -m predict -c ../../config/Llama_8bit_example.txt  -p ../../data/ustancebr/v2/simple_domain/final_bo_test.csv -o ../../out/ustancebr/pred/Llama_4bit_bo_v0
 
 ## VM
 # train BiCondBertLstm
