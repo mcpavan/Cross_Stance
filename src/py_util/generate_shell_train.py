@@ -1,22 +1,22 @@
 
 config_version_map = [
-    ("BertAAD", 1, 2),
+    # ("BertAAD", 1, 2),
     ("BiCondBertLstm", 1, 4),
     ("BertBiLSTMAttn", 1, 16),
     ("BertBiLSTMJointAttn", 1, 16),
     ("BertCrossNet", 1, 8),
-    ("BertJointCL", 1, 2),
-    ("BertTOAD", 1, 4),
+    # ("BertJointCL", 1, 2),
+    # ("BertTOAD", 1, 4),
 ]
 
 # config_file_name = "Bert_BiLSTMAttn"
 data_folder = "simple_domain" #"hold1topic_out" or "simple_domain"
-dataset = "semeval" #"ustancebr" or "semeval"
+dataset = "govbr" #"ustancebr" or "semeval" or "govbr"
 
 base_command = "python train_model.py -m train"
 base_config = " -c ../../config/{dataset}/{data_folder}/{config_file_name}_v{k}.txt"
 
-if dataset == "ustancebr":
+if dataset == "ustancebr" or dataset == "govbr":
     target_model_list = ["bo", "lu", "co", "cl", "gl", "ig"]
     base_trn_path = " -t ../../data/ustancebr/v2/{data_folder}/final_{tgt}_train.csv"
     base_vld_path = " -v ../../data/ustancebr/v2/{data_folder}/final_{tgt}_valid.csv"

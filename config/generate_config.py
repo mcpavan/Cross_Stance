@@ -2,17 +2,17 @@ from itertools import product
 import os
 
 first_v_config = 1
-folder = "simple_domain" # "simple_domain" or "hold1topic_out"
-dataset = "semeval" # "ustancebr" or "semeval"
+folder = "simple_domain" # "simple_domain" or "hold1topic_out""
+dataset = "govbr" # "ustancebr" or "semeval" or "gov_br"
 
 modelname2example = {
-    "BertAAD": "./example/Bert_AAD_example.txt",
+    # "BertAAD": "./example/Bert_AAD_example.txt",
     "BiCondBertLstm": "./example/Bert_BiCondLstm_example.txt",
     "BertBiLSTMAttn": "./example/Bert_BiLstmAttn_example.txt",
     "BertBiLSTMJointAttn": "./example/Bert_BiLstmJointAttn_example.txt",
     "BertCrossNet": "./example/Bert_CrossNet_example.txt",
-    "BertJointCL": "./example/Bert_JointCL_example.txt",
-    "BertTOAD": "./example/Bert_TOAD_example.txt",
+    # "BertJointCL": "./example/Bert_JointCL_example.txt",
+    # "BertTOAD": "./example/Bert_TOAD_example.txt",
     # "Llama_4bit": "./Llama_4bit_example.txt",
     # "Llama_8bit": "./Llama_8bit_example.txt",
 }
@@ -508,7 +508,7 @@ ckp_path = "../../checkpoints/{dataset}/{folder}/{name}/V{k}/"
 if dataset == "semeval":
     values_dict = values_dict_semeval
     default_params = default_params_semeval
-elif dataset == "ustancebr":
+elif dataset == "ustancebr" or dataset == "govbr":
     values_dict = values_dict_ustancebr
     default_params = default_params_ustancebr
 

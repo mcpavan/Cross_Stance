@@ -1373,6 +1373,9 @@ if __name__ == "__main__":
 # predict llama_8bit
 # python train_model.py -m predict -c ../../config/Llama_8bit_example.txt  -p ../../data/ustancebr/v2/simple_domain/final_bo_test.csv -o ../../out/ustancebr/pred/Llama_4bit_bo_v0
 
+# GOVBR
+# python train_model.py -m train -c ../../config/govbr/simple_domain/BertBiLstmJointAttn_v12.txt -t ../../data/govbr/simple_domain/final_co_train.csv -v ../../data/govbr/simple_domain/final_co_valid.csv -p ../../data/ustancebr/v2/hold1topic_out/final_co_test.csv -n co -e 5 -s 1
+
 ## VM
 # train BiCondBertLstm
 # nohup python train_model.py -m train -c ../../config/Bert_BiCondLstm_example_v0.txt -t ../../data/ustancebr/v2/hold1topic_out/final_bo_train.csv -v ../../data/ustancebr/v2/hold1topic_out/final_bo_valid.csv -n bo -e 5 -s 1 &
