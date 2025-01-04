@@ -3,6 +3,7 @@ import pandas as pd
 import time
 import torch
 import ast
+import json
 
 from collections import Counter
 from torch.utils.data import Dataset
@@ -340,7 +341,7 @@ class BertStanceDataset(Dataset):
         assert isinstance(vec, tuple) or isinstance(vec, float), "Target type is not tuple or float"
         if isinstance(vec, float)==1:
             vec = vec[0] * len(self.tgt_cnt.keys())
-        return vec2lbl.get(vec) or list(self.vec2lbl.values())[0]
+        return vec2lbl.get(vec) or list(vec2lbl.values())[0]
     
     def get_topic_list(self):
         return self.df[self.topic_col].unique().tolist()
@@ -361,6 +362,12 @@ class LLMStanceDataset(Dataset):
         :param text_col: name of the text column in the dataset
         :param topic_col: name of the topic column in the dataset
         :param label_col: name of the label column in the dataset
+        :param max_seq_len_text: maximum size of text sequence
+        :param n_texts_in_prompt: number of times that `texts` appear on the prompt
+        :param max_seq_len_topic: maximum size of topic sequence
+        :param n_topics_in_prompt: number of times that `topics` appear on the prompt
+        :param max_seq_len_example: maximum size of examples in promts
+        :param n_examples_in_prompt: number of times that `examples` appear on the prompt
         :param pretrained_model_name: name of the pretrained Language Model. Default=None. In this case,
                                       no tokenization will be performed, only the prompt will be generated
                                       follwoing the template.
@@ -369,6 +376,7 @@ class LLMStanceDataset(Dataset):
         :param data_sample: int or float that indicates to load only a sample of the original dataset in the file.
         :param random_state: random seed for generating the sample.
         :param model_type: "llama_cpp" or "hf_llm"
+        :param use_chat_template: whether to use tokenizer.apply_chat_template function. Default: False
         :param tokenizer_params: dict of parameters passed to the tokenizer loader
         :param alpha_load_classes: Weather to load classes (target and topic) in alphabetical order.
                indicated to the cases where there are different sizes of strata in the train/valid/test sets.
@@ -377,6 +385,9 @@ class LLMStanceDataset(Dataset):
         :param n_similar_sentences: number of similar sentences to consider as examples.
         :param train_dataset: train Dataset object that contains the examples to be used.
         """
+        
+        # :param bitsandbytesconfig_params: dict of parameters passed to create the bitsandbytesConfig object
+        #        that will be used to load the model
 
         skip_rows = kwargs.get("skip_rows")
         if skip_rows is not None:
@@ -387,9 +398,12 @@ class LLMStanceDataset(Dataset):
             **kwargs["pd_read_kwargs"],
             skiprows=skip_rows
         )
-        
+        self.use_chat_template = bool(int(kwargs.get("use_chat_template", "0")))
         with open(kwargs["prompt_file"], mode="r", encoding="utf-8") as f_:
-            self.prompt_template = f_.read()
+            if self.use_chat_template:
+                self.prompt_template = json.load(f_)
+            else:
+                self.prompt_template = f_.read()
 
         self.text_col = kwargs["text_col"]
         self.topic_col = kwargs["topic_col"]
@@ -397,6 +411,8 @@ class LLMStanceDataset(Dataset):
 
         self.data_sample = float(kwargs.get("data_sample", "1"))
         self.random_state = int(kwargs.get("random_state", "123"))
+        
+        self.model_type = kwargs.get("model_type")
 
         if self.data_sample > 1:
             self.data_sample = min(self.data_sample, len(self.df)) / len(self.df)
@@ -433,7 +449,7 @@ class LLMStanceDataset(Dataset):
         self.tokenized_input = False
         self.tokenizer = None
 
-        if kwargs.get("model_type") == "hf_llm":
+        if self.model_type == "hf_llm":
             self.tokenized_input = True
             self.pretrained_model_name = kwargs["pretrained_model_name"]
             
@@ -442,6 +458,34 @@ class LLMStanceDataset(Dataset):
                 self.pretrained_model_name,
                 **tokenizer_params
             )
+            
+            self.tokenizer.padding_side = "left"
+            self.tokenizer.pad_token = self.tokenizer.bos_token
+
+            self.max_seq_len_text = int(kwargs["max_seq_len_text"])
+            self.n_texts_in_prompt = int(kwargs.get("n_texts_in_prompt", "1"))
+            self.max_seq_len_topic = int(kwargs["max_seq_len_topic"])
+            self.n_topics_in_prompt = int(kwargs.get("n_topics_in_prompt", "1"))
+            self.max_seq_len_examples = int(kwargs.get("max_seq_len_examples", "0"))
+            self.n_examples_in_prompt = int(kwargs.get("n_examples_in_prompt", "1"))
+
+            if self.use_chat_template:
+                self.prompt_template_token_length = self.tokenizer.apply_chat_template(
+                    self.prompt_template,
+                    return_tensors="pt",
+                    return_dict=True,
+                    add_generation_prompt=True,
+                )["input_ids"].shape[-1]
+            else:
+                self.prompt_template_token_length = self.tokenizer(
+                    self.prompt_template,
+                    return_tensors="pt",
+                )["input_ids"].shape[-1]
+
+            self.max_prompt_length = self.prompt_template_token_length \
+                + self.max_seq_len_text * self.n_texts_in_prompt \
+                + self.max_seq_len_topic * self.n_topics_in_prompt \
+                + self.max_seq_len_examples * self.n_examples_in_prompt
 
         start_time = time.time()
         print(
@@ -495,26 +539,83 @@ class LLMStanceDataset(Dataset):
         for idx in self.df.index:
             self.df.at[idx, "weight"] = self.weight_dict[tuple(self.df.loc[idx, [self.topic_col, self.label_col]])]
 
+            def truncate_text(text, max_length):
+                if text == "":
+                    return text
+
+                encoded_text = self.tokenizer(
+                    text,
+                    padding=False,
+                    truncation=True,
+                    max_length=max_length,
+                    return_tensors="pt",
+                )["input_ids"]
+
+                return self.tokenizer.batch_decode(
+                    encoded_text,
+                    skip_special_tokens=True,
+                    clean_up_tokenization_spaces=True,
+                )[0]
+            
             current_text = self.df.loc[idx, self.text_col]
             current_topic = self.df.loc[idx, self.topic_col]
             current_examples = self.df.loc[idx, "examples"] if "examples" in self.df.columns else ""
-            self.df.at[idx, "prompt"] = self.prompt_template \
-                .replace("{text}", current_text) \
-                .replace("{topic}", current_topic) \
-                .replace("{examples}", current_examples)
+
+            if self.tokenized_input:
+                current_text = truncate_text(current_text, self.max_seq_len_text)
+                current_topic = truncate_text(current_topic, self.max_seq_len_topic)
+                current_examples = truncate_text(current_examples, self.max_seq_len_examples)
+
+            if self.use_chat_template:
+                current_prompt = []
+
+                for turn in self.prompt_template:
+                    turn_ = {k:v for k,v in turn.items()}
+
+                    if turn_["role"] == "user":
+                        turn_["content"] = turn_["content"] \
+                            .replace("{text}", current_text) \
+                            .replace("{topic}", current_topic) \
+                            .replace("{examples}", current_examples)
+
+                    current_prompt += [turn_]
+
+                self.df.at[idx, "prompt"] = current_prompt
+            else:   
+                self.df.at[idx, "prompt"] = self.prompt_template \
+                    .replace("{text}", current_text) \
+                    .replace("{topic}", current_topic) \
+                    .replace("{examples}", current_examples)
             
             if self.tokenized_input:
-                enc_prompt = self.tokenizer(
-                    self.df.loc[idx, "prompt"],
-                    return_tensors="pt",
-                )
+                if self.use_chat_template:
+                    enc_prompt = self.tokenizer.apply_chat_template(
+                        [self.df.loc[idx, "prompt"]],
+                        # padding=True,
+                        padding="max_length",
+                        max_length=self.max_prompt_length,
+                        truncation=True,
+                        return_tensors="pt",
+                        return_dict=True,
+                        add_generation_prompt=True,
+                    )
+                    
+                else:
+                    enc_prompt = self.tokenizer.batch_encode_plus(
+                        [self.df.loc[idx, "prompt"]],
+                        padding="max_length",
+                        max_length=self.max_prompt_length,
+                        truncation=True,
+                        return_tensors="pt",
+                    )
 
-                if hasattr(enc_prompt, "items"):
+                if hasattr(enc_prompt, "input_ids"):
                     for k, v in enc_prompt.items():
                         if k not in self.df.columns:
                             self.df[k] = [[] for _ in range(len(self.df))]
                         self.df.at[idx, k] = v
                 else:
+                    self.df["input_ids"] = [[] for _ in range(len(self.df))]
                     self.df.at[idx, "input_ids"] = enc_prompt
         
         total_time = time.time() - start_time
@@ -575,7 +676,7 @@ class LLMStanceDataset(Dataset):
         assert isinstance(vec, tuple) or isinstance(vec, float), "Target type is not tuple or float"
         if isinstance(vec, float)==1:
             vec = vec[0] * len(self.tgt_cnt.keys())
-        return vec2lbl.get(vec) or list(self.vec2lbl.values())[0]
+        return vec2lbl.get(vec) or list(vec2lbl.values())[0]
     
     def get_topic_list(self):
         return self.df[self.topic_col].unique().tolist()

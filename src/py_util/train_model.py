@@ -22,56 +22,107 @@ def load_config_file(config_file_path):
             config[l.strip().split(":")[0]] = ":".join(l.strip().split(":")[1:])
     return config
 
-def load_data(config, args, data_key="trn", trn_data=None):
-    tokenizer_params = {}
-    for k, v in config.items():
-        if k.startswith("hf_tokenizer_"):
-            tokenizer_params[k[13:]] = v
+def get_config_dict_prefix(config_dict, prefix):
+    params = {}
+    for k,v in config_dict.items():
+        if k.startswith(prefix):
+            k = k.replace(prefix, "")
+            if v.lower().strip() in ["true", "false"]:
+                params[k] = v.lower().strip() == "true"
+            else:
+                is_number = re.match(r"\A\d+(.\d*)\Z|\A\d+e(-)*\d+\Z", v)
+                if (is_number is not None) and (("." in v) or ("e" in v)):
+                    params[k] = float(v)
+                elif is_number is not None:
+                    params[k] = int(v)
+                else:
+                    params[k] = v
+    return params
 
+def load_data(config, args, data_key="trn", trn_data=None):
+    tokenizer_params = get_config_dict_prefix(
+        config_dict=config,
+        prefix="hf_tokenizer_"
+    )
+    
     if 'bert' in config or 'bert' in config['name'] or config.get("model_type", "").lower() == "bert":
-        data = datasets.BertStanceDataset(
-            data_file = args[f'{data_key}_data'],
-            pd_read_kwargs = {},#"engine": "python"},
-            text_col = config["text_col"],
-            topic_col = config["topic_col"],
-            label_col = config["label_col"],
-            max_seq_len_text = config["max_seq_len_text"],
-            max_seq_len_topic = config["max_seq_len_topic"],
-            pad_value = config.get("pad_value"),
-            add_special_tokens = config.get("add_special_tokens"),
-            bert_pretrained_model = config.get("bert_pretrained_model"),
-            is_joint = config.get("is_joint"),
-            sample_weights = config.get("sample_weights"),
-            data_sample = float(args.get("train_data_sample", 1.0)) if data_key == "trn" else 1,
-            random_state = int(args.get("random_state", 123)),
-            tokenizer_params = tokenizer_params,
-            skip_rows = args.get(f"skip_rows_{data_key}"),
-            alpha_load_classes = bool(args.get("alpha_load_classes", "0")),
-            ensemble_clf1_pred_file = args.get(f"ensemble_clf1_pred_{data_key}"),
-            ensemble_clf2_pred_file = args.get(f"ensemble_clf2_pred_{data_key}"),
-            ensemble_usescores = bool(config.get("ensemble_usescores", "0")),
-        )
+        dataset_args = {
+            "data_file": args[f'{data_key}_data'],
+            "pd_read_kwargs": {},#"engine": "python"},
+            "text_col": args.get(f"{data_key}_text_col") or config["text_col"],
+            "topic_col": args.get(f"{data_key}_topic_col") or config["topic_col"],
+            "label_col": args.get(f"{data_key}_label_col") or config["label_col"],
+            "max_seq_len_text": config["max_seq_len_text"],
+            "max_seq_len_topic": config["max_seq_len_topic"],
+            "data_sample": float(args.get("train_data_sample", 1.0)) if data_key == "trn" else 1,
+            "random_state": int(args.get("random_state", 123)),
+            "tokenizer_params": tokenizer_params,
+            "alpha_load_classes": int(config.get("alpha_load_classes", "0")),
+            "ensemble_usescores": int(config.get("ensemble_usescores", "0")),
+        }
+        if "pad_value" in config:
+            dataset_args["pad_value"] = config.get("pad_value")
+        if "add_special_tokens" in config:
+            dataset_args["add_special_tokens"] = config.get("add_special_tokens")
+        if "bert_pretrained_model" in config:
+            dataset_args["bert_pretrained_model"] = config.get("bert_pretrained_model")
+        if "is_joint" in config:
+            dataset_args["is_joint"] = config.get("is_joint")
+        if "sample_weights" in config:
+            dataset_args["sample_weights"] = config.get("sample_weights")
+        if f"skip_rows_{data_key}" in args:
+            dataset_args["skip_rows"] = args.get(f"skip_rows_{data_key}")
+        if f"ensemble_clf1_pred_{data_key}" in args:
+            dataset_args["ensemble_clf1_pred_file"] = args.get(f"ensemble_clf1_pred_{data_key}")
+        if f"ensemble_clf2_pred_{data_key}" in args:
+            dataset_args["ensemble_clf1_pred_file"] = args.get(f"ensemble_clf2_pred_{data_key}")
+
+        data = datasets.BertStanceDataset(**dataset_args)
+
     elif config.get("model_type", "").lower() in ["llama_cpp", "hf_llm", "hf_api"]:
+        dataset_args = {
+            "data_file": args[f'{data_key}_data'],
+            "prompt_file": config["prompt_template_file"],
+            "pd_read_kwargs": {},#"engine": "python"},
+            "text_col": args.get(f"{data_key}_text_col") or config["text_col"],
+            "topic_col": args.get(f"{data_key}_topic_col") or config["topic_col"],
+            "label_col": args.get(f"{data_key}_label_col") or config["label_col"],
+            "data_sample": float(args.get("train_data_sample", 1.0)) if data_key == "trn" else 1,
+            "random_state": int(args.get("random_state", 123)),
+            "tokenizer_params": tokenizer_params,
+            "alpha_load_classes": int(config.get("alpha_load_classes", "0")),
+            "use_chat_template": int(config.get("use_chat_template", "0")),
+        }
+
         needs_few_shot_examples = int(config.get("needs_few_shot_examples", "0"))
-        data = datasets.LLMStanceDataset(
-            data_file = args[f'{data_key}_data'],
-            prompt_file = config["prompt_template_file"],
-            pd_read_kwargs = {},
-            text_col = config["text_col"],
-            topic_col = config["topic_col"],
-            label_col = config["label_col"],
-            pretrained_model_name = config.get("pretrained_model_name"),
-            sample_weights = config.get("sample_weights"),
-            data_sample = float(args.get("train_data_sample", 1.0)) if data_key == "trn" else 1,
-            random_state = int(args.get("random_state", 123)),
-            model_type = config.get("model_type", "").lower(),
-            tokenizer_params = tokenizer_params,
-            skip_rows = args.get(f"skip_rows_{data_key}"),
-            alpha_load_classes = bool(args.get("alpha_load_classes", "0")),
-            sentence_model_name = config.get("sentence_model_name") if needs_few_shot_examples else None,
-            n_similar_sentences = config.get("n_similar_sentences") if needs_few_shot_examples else None,
-            train_dataset = trn_data if needs_few_shot_examples else None,
-        )
+        if "max_seq_len_text" in config:
+            dataset_args["max_seq_len_text"] = config.get("max_seq_len_text")
+        if "n_texts_in_prompt" in config:
+            dataset_args["n_texts_in_prompt"] = config.get("n_texts_in_prompt")
+        if "max_seq_len_topic" in config:
+            dataset_args["max_seq_len_topic"] = config.get("max_seq_len_topic")
+        if "n_topics_in_prompt" in config:
+            dataset_args["n_topics_in_prompt"] = config.get("n_topics_in_prompt")
+        if "max_seq_len_examples" in config:
+            dataset_args["max_seq_len_examples"] = config.get("max_seq_len_examples")
+        if "n_examples_in_prompt" in config:
+            dataset_args["n_examples_in_prompt"] = config.get("n_examples_in_prompt")
+        if "pretrained_model_name" in config:
+            dataset_args["pretrained_model_name"] = config.get("pretrained_model_name")
+        if "sample_weights" in config:
+            dataset_args["sample_weights"] = config.get("sample_weights")
+        if "model_type" in config:
+            dataset_args["model_type"] = config.get("model_type")
+        if f"skip_rows_{data_key}" in args:
+            dataset_args["skip_rows"] = args.get(f"skip_rows_{data_key}")
+        if needs_few_shot_examples:
+            if "sentence_model_name" in config:
+                dataset_args["sentence_model_name"] = config.get("sentence_model_name")
+            if "n_similar_sentences" in config:
+                dataset_args["n_similar_sentences"] = config.get("n_similar_sentences")        
+            dataset_args["train_dataset"] = trn_data
+
+        data = datasets.LLMStanceDataset(**dataset_args)
     else:
         #TODO: Create dataset for other types of models
         data = None
@@ -360,8 +411,7 @@ def save_predictions(model_handler, dev_data, dev_dataloader, out_name, config, 
             dev_proba.append(pred_val)
             
             int_pred = pred_val.argmax()
-            
-            vec_pred = base_vec*0
+            vec_pred = np.array(base_vec)*0
             vec_pred[int_pred] = 1
             vec_pred = tuple(vec_pred)
 
@@ -376,19 +426,20 @@ def save_predictions(model_handler, dev_data, dev_dataloader, out_name, config, 
 
     # predict_helper(trn_preds, model_handler.dataloader).to_csv(out_name + '-train.csv', index=False)
     # print("saved to {}-train.csv".format(out_name))
-    if "/" in out_name:
-        out_folder = "/".join(out_name.split("/")[:-1])
-        os.makedirs(out_folder, exist_ok=True)
-    
-    predict_helper(dev_preds, dev_proba, dev_data, config).to_csv(out_name + '-{}.csv'.format(dev_name), index=False)
-    print("saved to {}-{}.csv".format(out_name, dev_name))
+    if out_name is not None:
+        if "/" in out_name:
+            out_folder = "/".join(out_name.split("/")[:-1])
+            os.makedirs(out_folder, exist_ok=True)
+        
+        predict_helper(dev_preds, dev_proba, dev_data, config).to_csv(out_name + '-{}.csv'.format(dev_name), index=False)
+        print("saved to {}-{}.csv".format(out_name, dev_name))
 
 def predict_helper(pred_lst, proba_lst, pred_data, config):
     out_data = []
     cols = [
-        config['text_col'],
-        config['topic_col'],
-        config['label_col'],
+        pred_data.text_col,
+        pred_data.topic_col,
+        pred_data.label_col,
     ]
     for i in pred_data.df.index:
         row = pred_data.df.iloc[i]
@@ -396,7 +447,7 @@ def predict_helper(pred_lst, proba_lst, pred_data, config):
         temp.append(pred_lst[i])
         temp.append(proba_lst[i])
         out_data.append(temp)
-    cols += [config['label_col']+'_pred', config['label_col']+'_proba']
+    cols += [pred_data.label_col+'_pred', pred_data.label_col+'_proba']
     return pd.DataFrame(out_data, columns=cols)
 
 def llm_collate_fn(batch):
@@ -404,10 +455,10 @@ def llm_collate_fn(batch):
 
     for instance in batch:
         for k, v in instance.items():
-            if isinstance(v, str): 
-                collated_dict[k] = collated_dict.get(k, []) + [v]
-            else:
-                collated_dict[k] = collated_dict.get(k, []) + [torch.Tensor(v)]
+            # if isinstance(v, str): 
+            collated_dict[k] = collated_dict.get(k, []) + [v]
+            # else:
+            #     collated_dict[k] = collated_dict.get(k, []) + [torch.Tensor(v)]
     
     return collated_dict
 
@@ -428,7 +479,7 @@ def main(args):
     # LOAD DATA #
     #############
     # load training data
-    batch_size = int(config['batch_size']) if not is_llm else 1
+    batch_size = args.get("batch_size") or (int(config['batch_size']) if not is_llm else 1)
     train_fn = train
     train_data = None
     if args['trn_data'] is not None:
@@ -442,6 +493,7 @@ def main(args):
             shuffle=True,
             drop_last=args["drop_last_batch"],
             collate_fn = llm_collate_fn if is_hfllm else None,
+            # collate_fn = None,
         )
     else:
         if args["mode"] == "train":
@@ -485,10 +537,10 @@ def main(args):
 
     # RUN
     print("Using cuda?: {}".format(use_cuda))
-    hf_model_params = {}
-    for k, v in config.items():
-        if k.startswith("hf_model_"):
-            hf_model_params[k[9:]] = v
+    hf_model_params = get_config_dict_prefix(
+        config_dict=config,
+        prefix="hf_model_"
+    )
 
     if "BiLSTMAttn" in config["name"]:
         text_input_layer = input_models.BertLayer(
@@ -994,6 +1046,7 @@ def main(args):
         )
 
     elif 'JointCL' in config['name']:
+        # needs to save the clusters to be able to predict with the trained model
         pretrained_model_name=config.get("bert_pretrained_model", "bert-base-uncased")
         layers=config.get("bert_layers", "-1")
         layers_agg_type=config.get("bert_layers_agg", "concat")
@@ -1096,29 +1149,24 @@ def main(args):
                 num_labels=nl
             )
 
-
         elif "hf_llm" in config['model_type']:
+            bitsandbytesconfig_params = get_config_dict_prefix(
+                config_dict=config,
+                prefix="bitsandbytesconfig_"
+            )
+            
             model = llms.HF_Llama_Model(
                 model=config.get("pretrained_model_name", "bigscience/bloom-1b7"),
                 hf_model_params=hf_model_params,
+                bitsandbytesconfig_params=bitsandbytesconfig_params,
                 num_labels=nl,
             )
         
         elif "hf_api" in config['model_type']:
-
-            model_params = {}
-            for k,v in config.items():
-                if k.startswith("hf_api_"):
-                    if v.lower().strip() in ["true", "false"]:
-                        model_params[k.replace("hf_api_", "")] = v.lower().strip() == "true"
-                    else:
-                        is_number = re.match("\A\d+(.\d*)\Z|\A\d+e(-)*\d+\Z", v) 
-                        if is_number and "." in v or "e" in v:
-                            model_params[k.replace("hf_api_", "")] = float(v.lower())
-                        elif is_number:
-                            model_params[k.replace("hf_api_", "")] = int(v.lower())
-                        else:
-                            model_params[k.replace("hf_api_", "")] = v.lower()
+            model_params = get_config_dict_prefix(
+                config_dict=config,
+                prefix="hf_api_"
+            )
             
             model = llms.HF_API_Model(
                 api_url=config.get("api_url", "https://api-inference.huggingface.co/models/bigscience/bloom"),
@@ -1127,10 +1175,7 @@ def main(args):
                 num_labels=nl,
             )
         
-        llm_params = {}
-        for k,v in config.items():
-            if k.startswith("llm_"):
-                llm_params[k.replace("llm_", "")] = v
+        llm_params = get_config_dict_prefix(config_dict=config, prefix="llm_")
         
         if "tst_data" in locals():
             dataset_ = tst_data
@@ -1158,6 +1203,7 @@ def main(args):
             "save_every_n_batches": config.get("save_every_n_batches", "2"),
             "output_err_default": config.get("output_err_default", "0"),
             "output_class_order": config.get("output_class_order", None),
+            "is_hfllm": is_hfllm
             # "output_parser": [use specifc function if needed]
         }
 
@@ -1169,7 +1215,6 @@ def main(args):
             use_cuda=use_cuda,
             **kwargs
         )
-
 
     if args["mode"] == 'train':
         # Train model
@@ -1301,7 +1346,16 @@ if __name__ == "__main__":
     parser.add_argument('-bv2', '--ensemble_clf2_pred_vld', type=str, dest="ensemble_clf2_pred_vld", help="Path to file containing the 2nd classifier predictions on validation data.", default=None)
     parser.add_argument('-bp1', '--ensemble_clf1_pred_tst', type=str, dest="ensemble_clf1_pred_tst", help="Path to file containing the 1st classifier predictions on test data.", default=None)
     parser.add_argument('-bp2', '--ensemble_clf2_pred_tst', type=str, dest="ensemble_clf2_pred_tst", help="Path to file containing the 2nd classifier predictions on test data.", default=None)
-
+    parser.add_argument('-tt', '--trn_text_col', type=str, dest="trn_text_col", help="Override the name of text column for training dataset.", required=False)
+    parser.add_argument('-tg', '--trn_topic_col', type=str, dest="trn_topic_col", help="Override the name of topic column for training dataset.", required=False)
+    parser.add_argument('-tl', '--trn_label_col', type=str, dest="trn_label_col", help="Override the name of label column for training dataset.", required=False)
+    parser.add_argument('-vt', '--vld_text_col', type=str, dest="vld_text_col", help="Override the name of text column for validation dataset..", required=False)
+    parser.add_argument('-vg', '--vld_topic_col', type=str, dest="vld_topic_col", help="Override the name of topic column for validation dataset..", required=False)
+    parser.add_argument('-vl', '--vld_label_col', type=str, dest="vld_label_col", help="Override the name of label column for validation dataset..", required=False)
+    parser.add_argument('-pt', '--tst_text_col', type=str, dest="tst_text_col", help="Override the name of text column for test dataset.", required=False)
+    parser.add_argument('-pg', '--tst_topic_col', type=str, dest="tst_topic_col", help="Override the name of topic column for test dataset.", required=False)
+    parser.add_argument('-pl', '--tst_label_col', type=str, dest="tst_label_col", help="Override the name of label column for test dataset.", required=False)
+    parser.add_argument('-bs', '--batch_size', type=int, dest="batch_size", help="Override the batch size for loading all datasets.", required=False)
     args = vars(parser.parse_args())
 
     main(args)
@@ -1371,7 +1425,12 @@ if __name__ == "__main__":
 # python train_model.py -m predict -c ../../config/semeval/few_shot/Llama_4bit_v0.txt -t ../../data/semeval/simple_domain/final_hc_train.csv -p ../../data/semeval/simple_domain/final_hc_test.csv -o ../../out/semeval/pred/few_shot/Llama_4bit_hc_v0 -u ../../out/semeval/pred/few_shot/Llama_4bit_hc_v0/llama_cpp_pred_checkpoints/Llama_4bit_semeval_full.ckp -a 10
 
 # predict llama_8bit
-# python train_model.py -m predict -c ../../config/Llama_8bit_example.txt  -p ../../data/ustancebr/v2/simple_domain/final_bo_test.csv -o ../../out/ustancebr/pred/Llama_4bit_bo_v0
+# python train_model.py -m predict -c ../../config/Llama_8bit_example.txt  -p ../../data/ustancebr/v2/simple_domain/final_bo_test.csv -o ../../out/ustancebr/pred/Llama_8bit_bo_v0
+
+# predict llama3_4bit
+# python train_model.py -m predict -c ../../config/Llama3_4bit_example.txt  -p ../../data/ustancebr/v2/simple_domain/final_bo_test.csv -o ../../out/ustancebr/pred/Llama2_4bit_bo_v0
+# python train_model.py -m predict -c ../../config/ustancebr/zero_shot/Llama3_4bit_v0.txt  -p ../../data/ustancebr/v2/simple_domain/final_bo_test.csv -o ../../out/ustancebr/pred/Llama3_4bit_bo_v0 -bs 12
+
 
 # GOVBR
 # python train_model.py -m train -c ../../config/govbr/simple_domain/BertBiLstmJointAttn_v12.txt -t ../../data/govbr/simple_domain/final_co_train.csv -v ../../data/govbr/simple_domain/final_co_valid.csv -p ../../data/ustancebr/v2/hold1topic_out/final_co_test.csv -n co -e 5 -s 1

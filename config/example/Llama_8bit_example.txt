@@ -8,6 +8,8 @@ hf_tokenizer_use_auth_token:
 text_col:Text
 topic_col:Target
 label_col:Polarity
+max_seq_len_text:60
+max_seq_len_topic:5
 sample_weights:1
 batch_size:32
 n_output_classes:2

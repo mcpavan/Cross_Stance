@@ -2,7 +2,7 @@ import datetime
 import time
 from typing import Any
 from llama_cpp import Llama
-from transformers import AutoModelForCausalLM, AutoTokenizer
+from transformers import AutoModelForCausalLM, AutoTokenizer, BitsAndBytesConfig
 import requests
 
 # def get_llm_class_and_params(model_type, params):
@@ -41,20 +41,29 @@ class LlamaCpp_Model:
         return output["choices"][0]["text"]
 
 class HF_Llama_Model:
-    def __init__(self, model="bigscience/bloom-1b7", hf_model_params={}, num_labels=2):
+    def __init__(self, model="bigscience/bloom-1b7", hf_model_params={}, bitsandbytesconfig_params={}, num_labels=2):
+        if len(bitsandbytesconfig_params) > 0:
+            bitsandbytesconfig_config = BitsAndBytesConfig(**bitsandbytesconfig_params)
+            hf_model_params["quantization_config"] = bitsandbytesconfig_config
+        
         # self.tokenizer = AutoTokenizer.from_pretrained(model)
-        self.model = AutoModelForCausalLM.from_pretrained(model, device_map="auto", **hf_model_params)
+        self.model = AutoModelForCausalLM.from_pretrained(
+            model,
+            device_map="auto",
+            **hf_model_params
+        )
         self.model_type = "hugging_face"
         self.num_labels = num_labels
         self.output_dim = 1
 
     def __call__(self, *args: Any, **kwds: Any) -> Any:
-        return self.forward(args, kwds)
+        return self.forward(*args, **kwds)
     
-    def forward(self, prompt_ids, params):
+    def forward(self, params=None, *args: Any, **kwds: Any):
         generated_ids = self.model.generate(
-            prompt_ids,
-            max_length=params.get("max_length", 32)
+            *args,
+            **kwds,
+            # max_new_tokens=params.get("max_length", 32),
         )
         # self.tokenizer.batch_decode(generated_ids, skip_special_tokens=True, clean_up_tokenization_spaces=True)
         return generated_ids

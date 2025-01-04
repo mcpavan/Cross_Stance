@@ -2,15 +2,15 @@ from itertools import product
 import os
 
 first_v_config = 1
-folder = "simple_domain" # "simple_domain" or "hold1topic_out""
-dataset = "govbr" # "ustancebr" or "semeval" or "gov_br"
+folder = "stance_vs_notstance" #"simple_domain" or "hold1topic_out" or "simple_domain_filter" or "hold1topic_out_filter" or "hc_bilstmattn_v7" or "domaincorpus_weaksup"
+dataset = "ustancebr" # "ustancebr" or "semeval" or "govbr" or "govbr_semeval" or "govbr_brmoral" or "govbr_mtwitter" or "election" or "ufrgs"
 
 modelname2example = {
     # "BertAAD": "./example/Bert_AAD_example.txt",
-    "BiCondBertLstm": "./example/Bert_BiCondLstm_example.txt",
+    # "BiCondBertLstm": "./example/Bert_BiCondLstm_example.txt",
     "BertBiLSTMAttn": "./example/Bert_BiLstmAttn_example.txt",
     "BertBiLSTMJointAttn": "./example/Bert_BiLstmJointAttn_example.txt",
-    "BertCrossNet": "./example/Bert_CrossNet_example.txt",
+    # "BertCrossNet": "./example/Bert_CrossNet_example.txt",
     # "BertJointCL": "./example/Bert_JointCL_example.txt",
     # "BertTOAD": "./example/Bert_TOAD_example.txt",
     # "Llama_4bit": "./Llama_4bit_example.txt",
@@ -25,6 +25,9 @@ default_params_ustancebr = {
     "n_output_classes": 2,
 }
 
+default_params_ustancebr_stance_notstance = default_params_ustancebr.copy()
+default_params_ustancebr_stance_notstance["label_col"] = "IsStance"
+
 default_params_semeval = {
     "text_col":"Tweet",
     "topic_col":"Target",
@@ -33,6 +36,28 @@ default_params_semeval = {
     "n_output_classes": 3,
     "alpha_load_classes": 1,
 }
+
+default_params_govbr_semeval = {
+    "text_col":"Tweet",
+    "topic_col":"Target",
+    "label_col":"Stance",
+    "sample_weights": 1,
+    "n_output_classes": 2,
+    "alpha_load_classes": 1,
+}
+
+default_params_govbr_brmoral_mtwitter = {
+    "text_col":"Text",
+    "topic_col":"Target",
+    "label_col":"Polarity",
+    "sample_weights": 1,
+    "n_output_classes": 2,
+    "alpha_load_classes": 1,
+}
+
+default_params_ufrgs = default_params_semeval.copy()
+default_params_ufrgs["sample_weights"] = 1
+
 
 values_dict_ustancebr = {
     "BertAAD": {
@@ -54,7 +79,6 @@ values_dict_ustancebr = {
             1024,
             3072,
         ]
-
     },
     "BiCondBertLstm": {
         "bert_pretrained_model": [
@@ -75,7 +99,10 @@ values_dict_ustancebr = {
         ],
         "learning_rate": [
             1e-7,
-        ]
+        ],
+        # "batch_size": [
+        #     96
+        # ],
     },
     "BertBiLSTMAttn": {
         "bert_pretrained_model": [
@@ -102,6 +129,9 @@ values_dict_ustancebr = {
             "1",
             "16",
         ],
+        "batch_size": [
+            "192",
+        ]
     },
     "BertBiLSTMJointAttn": {
         "bert_pretrained_model": [
@@ -128,6 +158,9 @@ values_dict_ustancebr = {
             "1",
             "16",
         ],
+        "batch_size": [
+            "152",
+        ]
     },
     "BertCrossNet": {
         "bert_pretrained_model": [
@@ -179,9 +212,9 @@ values_dict_ustancebr = {
         "learning_rate": [
             1e-7,
         ],
-        "batch_size": [
-            32
-        ],
+        # "batch_size": [
+        #     32
+        # ],
     },
     "BertTOAD": {
         "bert_pretrained_model": [
@@ -213,10 +246,10 @@ values_dict_ustancebr = {
         "learning_rate": [
             1e-5,
         ],
-        "batch_size": [
-            # 80,
-            16,
-        ],
+        # "batch_size": [
+        #     # 80,
+        #     16,
+        # ],
     },
     "Llama_4bit": {
         "pretrained_model_name": [
@@ -228,10 +261,10 @@ values_dict_ustancebr = {
                 "output_max_score": 10,
             }
         ],
-        "batch_size": [
-            # 80,
-            16,
-        ],
+        # "batch_size": [
+        #     # 80,
+        #     16,
+        # ],
     },
     "Llama_8bit": {
         "model": [
@@ -248,10 +281,10 @@ values_dict_ustancebr = {
                 "output_max_score": 10,
             }
         ],
-        "batch_size": [
-            # 80,
-            16,
-        ],
+        # "batch_size": [
+        #     # 80,
+        #     16,
+        # ],
     },
 }
 
@@ -415,9 +448,9 @@ values_dict_semeval = {
         "epochs":[
             20,
         ],
-        "batch_size": [
-            32
-        ],
+        # "batch_size": [
+        #     32
+        # ],
     },
     "BertTOAD": {
         "bert_pretrained_model": [
@@ -451,10 +484,10 @@ values_dict_semeval = {
         "epochs":[
             20,
         ],
-        "batch_size": [
-            # 80,
-            16,
-        ],
+        # "batch_size": [
+        #     # 80,
+        #     16,
+        # ],
     },
     "Llama_4bit": {
         "pretrained_model_name": [
@@ -466,10 +499,10 @@ values_dict_semeval = {
                 "output_max_score": 10,
             }
         ],
-        "batch_size": [
-            # 80,
-            16,
-        ],
+        # "batch_size": [
+        #     # 80,
+        #     16,
+        # ],
     },
     "Llama_8bit": {
         "model": [
@@ -486,10 +519,135 @@ values_dict_semeval = {
                 "output_max_score": 10,
             }
         ],
-        "batch_size": [
-            # 80,
-            16,
+        # "batch_size": [
+        #     # 80,
+        #     16,
+        # ],
+    },
+}
+
+values_dict_ustancebr_filter = {
+    "BiCondBertLstm": {
+        "bert_pretrained_model": [
+            # "neuralmind/bert-base-portuguese-cased",
+            "pablocosta/bertabaporu-base-uncased",
         ],
+        "bert_layers": [
+            # "-1",
+            "-4,-3,-2,-1",
+        ],
+        "lstm_layers": [
+            "1",
+            "2",
+        ],
+        "lstm_hidden_dim": [
+            "16",
+            "128",
+        ],
+        "learning_rate": [
+            1e-7,
+        ],
+        "epochs": [
+            50
+        ],
+        # "batch_size": [
+        #     96
+        # ],
+    },
+    "BertBiLSTMAttn": {
+        "bert_pretrained_model": [
+            # "neuralmind/bert-base-portuguese-cased",
+            "pablocosta/bertabaporu-base-uncased",
+        ],
+        "bert_layers": [
+            # "-1",
+            "-4,-3,-2,-1",
+        ],
+        "lstm_layers": [
+            "1",
+            "2",
+        ],
+        "lstm_hidden_dim": [
+            "16",
+            "128",
+        ],
+        "attention_density": [
+            "32",
+            "64",
+        ],
+        "attention_heads": [
+            "1",
+            "16",
+        ],
+        "epochs": [
+            50
+        ],
+        # "batch_size": [
+        #     "192",
+        # ]
+    },
+    "BertBiLSTMJointAttn": {
+        "bert_pretrained_model": [
+            # "neuralmind/bert-base-portuguese-cased",
+            "pablocosta/bertabaporu-base-uncased",
+        ],
+        "bert_layers": [
+            # "-1",
+            "-4,-3,-2,-1",
+        ],
+        "lstm_layers": [
+            "1",
+            "2",
+        ],
+        "lstm_hidden_dim": [
+            "16",
+            "128",
+        ],
+        "attention_density": [
+            "32",
+            "64",
+        ],
+        "attention_heads": [
+            "1",
+            "16",
+        ],
+        "epochs": [
+            50
+        ],
+        # "batch_size": [
+        #     "152",
+        # ]
+    },
+    "BertCrossNet": {
+        "bert_pretrained_model": [
+            # "neuralmind/bert-base-portuguese-cased",
+            "pablocosta/bertabaporu-base-uncased",
+        ],
+        "bert_layers": [
+            # "-1",
+            "-4,-3,-2,-1",
+        ],
+        "lstm_layers": [
+            "1",
+            "2",
+        ],
+        "lstm_hidden_dim": [
+            "16",
+            "128",
+        ],
+        "attention_density": [
+            "100",
+            "200",
+        ],
+        "learning_rate": [
+            1e-7,
+        ],
+        "epochs": [
+            50
+        ],
+        # "batch_size": [
+        #     64
+        # ],
     },
 }
 
@@ -505,12 +663,27 @@ def load_config_file(config_file_path):
 out_path = "./{dataset}/{folder}/{model_name_out_file}_v{k}.txt"
 ckp_path = "../../checkpoints/{dataset}/{folder}/{name}/V{k}/"
 
-if dataset == "semeval":
+if dataset in ["semeval", "election", "ufrgs"]:
     values_dict = values_dict_semeval
-    default_params = default_params_semeval
-elif dataset == "ustancebr" or dataset == "govbr":
+    if dataset in ["ufrgs", "govbr_semeval"]:
+        default_params = default_params_ufrgs
+    else:
+        default_params = default_params_semeval
+elif dataset in ["ustancebr", "govbr"]:
     values_dict = values_dict_ustancebr
     default_params = default_params_ustancebr
+
+    if folder.endswith("_filter"):
+        values_dict = values_dict_ustancebr_filter
+    
+    if folder in ["stance_vs_notstance"]:
+        default_params = default_params_ustancebr_stance_notstance
+elif dataset == "govbr_semeval":
+    values_dict = values_dict_ustancebr_filter
+    default_params = default_params_govbr_semeval
+elif dataset in ["govbr_brmoral", "govbr_mtwitter"]:
+    values_dict = values_dict_ustancebr_filter
+    default_params = default_params_govbr_brmoral_mtwitter
 
 for model_name_out_file, example_file in modelname2example.items():
     os.makedirs(

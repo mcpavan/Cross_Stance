@@ -3,7 +3,7 @@ from glob import glob
 from tqdm import tqdm
 from itertools import product
 
-dataset = "semeval" # "ustancebr" or "semeval"
+dataset = "ustancebr" # "ustancebr" or "semeval" or "govbr" or "election" or "ufrgs"
 eval_base_path = f"../../out/{dataset}/eval"
 out_path = f"{eval_base_path}/.results/data/eval_data.csv"
 errors_out_path = f"{eval_base_path}/.results/data/errors_eval_data.csv"
@@ -71,6 +71,7 @@ for eval_file_path in tqdm(glob(f"{eval_base_path}/**/*.txt", recursive=True)):
             eval_results_dict[key] += [None]        
 
 df_results = pd.DataFrame(eval_results_dict)
+df_results["version"] = df_results["version"].apply(lambda x: str(x).replace(".0", ""))
 # df_results = df_results.dropna(how="all")
 df_results = df_results.dropna(subset=["test_fmacro", "valid_fmacro"], how="all")
 df_results.to_csv(out_path, index=False)

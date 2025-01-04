@@ -102,6 +102,11 @@ class TorchModelHandler:
                 label_tensor = label_tensor.argmax(dim=1).reshape(-1,1)
             label_tensor = label_tensor.squeeze(dim=-1)
             
+            if self.num_labels <= 2:
+                label_tensor = label_tensor.type(torch.FloatTensor)
+            else:
+                label_tensor = label_tensor.type(torch.LongTensor)
+            
             if self.use_cuda:
                 label_tensor = label_tensor.to("cuda")
 
@@ -184,12 +189,23 @@ class TorchModelHandler:
         :param score_dict: the dictionary used to store the scores.
         '''
         if hasattr(self, "is_llm") and self.is_llm:
-            vals = score_fn(
-                true_labels,
-                np.floor(pred_labels*self.num_labels),
-                average=None,
-                labels=range(self.num_labels)
-            )
+            if self.output_dim > 1:
+                # print("*"*20, "\ntrue_labels:", true_labels, "\n\n")
+                # print("*"*20, "\npred_labels:", pred_labels, "\n\n")
+                # print("*"*20, "\npred_labels*n_labels:", np.floor(pred_labels*self.num_labels), "\n\n")
+                vals = score_fn(
+                    true_labels,
+                    np.floor(pred_labels*self.num_labels),
+                    average=None,
+                    labels=range(self.num_labels)
+                )
+            else:
+                vals = score_fn(
+                    true_labels,
+                    (pred_labels>0.5)*1,
+                    average=None,
+                    labels=range(self.num_labels)
+                )
         elif self.output_dim == 1:
             vals = score_fn(true_labels, (pred_labels>0.5)*1, average=None, labels=range(self.num_labels))
         else:
@@ -271,6 +287,11 @@ class TorchModelHandler:
                     label_tensor = label_tensor.argmax(dim=1).reshape(-1,1)
                 label_tensor = label_tensor.squeeze(dim=-1)
 
+                if self.num_labels <= 2:
+                    label_tensor = label_tensor.type(torch.FloatTensor)
+                else:
+                    label_tensor = label_tensor.type(torch.LongTensor)
+
                 all_labels = torch.cat((all_labels, label_tensor))
                 if self.use_cuda:
                     label_tensor = label_tensor.to("cuda")
@@ -327,7 +348,7 @@ class TorchModelHandler:
             
                 partial_loss += graph_loss.item()
 
-        avg_loss = partial_loss / batch_n #loss per batch
+        avg_loss = partial_loss / max(batch_n, 1) #loss per batch
         return all_y_pred.numpy(), all_labels.numpy(), avg_loss#partial_loss
     
     def eval_and_print(self, data=None, data_name=None, y_pred=None):
@@ -580,7 +601,7 @@ class TOADTorchModelHandler(TorchModelHandler):
 
                 partial_main_loss += graph_loss_all.item()
 
-        avg_loss = partial_main_loss / batch_n #loss per batch
+        avg_loss = partial_main_loss / max(batch_n, 1) #loss per batch
         return all_stance_pred, all_stance_labels, all_topic_pred, all_topic_labels, avg_loss
 
     def eval_model(self, data=None, y_pred=None):
@@ -850,7 +871,7 @@ class AADTorchModelHandler(TorchModelHandler):
 
             #sum the loss
             # partial_loss += graph_loss.item()
-        avg_loss = partial_main_loss / batch_n #loss per batch
+        avg_loss = partial_main_loss / max(batch_n, 1) #loss per batch
 
         return all_stance_pred, all_stance_labels, avg_loss
 
@@ -1116,7 +1137,7 @@ class JointCLTorchModelHandler(TorchModelHandler):
                 
                 partial_loss += graph_loss.item()
 
-        avg_loss = partial_loss / batch_n #loss per batch
+        avg_loss = partial_loss / max(batch_n, 1) #loss per batch
         print("0.0 - 0.1", (all_y_pred.numpy() <= 0.1).sum(axis=0))
         print("0.1 - 0.2", ((all_y_pred.numpy() > 0.1) * (all_y_pred.numpy()<= 0.2)).sum(axis=0))
         print("0.2 - 0.3", ((all_y_pred.numpy() > 0.2) * (all_y_pred.numpy()<= 0.3)).sum(axis=0))
@@ -1142,6 +1163,7 @@ class LLMTorchModelHandler(TorchModelHandler):
         )
         
         self.is_llm = True
+        self.is_hfllm = params["is_hfllm"]
         self.model = params["model"]
         self.model_params = params.get("model_params", {})
         self.dataset = params["dataset"]
@@ -1151,7 +1173,7 @@ class LLMTorchModelHandler(TorchModelHandler):
         self.output_max_score = int(params.get("output_max_score", "10"))
         self.output_parser = params.get("output_parser", self._output_parser_fn)
         self.save_every_n_batches = int(params.get("save_every_n_batches", "0"))
-        self.output_err_default = params.get("output_err_default", "0.0")
+        self.output_err_default = float(params.get("output_err_default", "0.0"))
         
         if self.output_format == "score":
             self.output_err_default = float(self.output_err_default)
@@ -1162,6 +1184,8 @@ class LLMTorchModelHandler(TorchModelHandler):
             self.output_class_order = self.output_class_order.split(",")
             self.output_class_map = [self.dataset.tgt2vec[k] for k in self.output_class_order]
 
+        if len(self.model_params) == 0:
+            self.model_params["max_new_tokens"] = 32
     def _output_parser_fn(self, output):
         output = output.strip().lower()
 
@@ -1172,7 +1196,10 @@ class LLMTorchModelHandler(TorchModelHandler):
 
                 prediction = output[set_regex.start():set_regex.end()].lower()
                 prediction = self.dataset.convert_lbl_to_vec(prediction, self.dataset.tgt2vec)
-                prediction = (np.argmax(prediction)+0.5)/self.num_labels
+                if len(prediction) > 1:
+                    prediction = (np.argmax(prediction)+0.5)/self.num_labels
+                else:
+                    prediction = prediction[0]/self.num_labels
             
             elif self.output_format == "score":
                 score_regex = re.search("([0-9]+)(/[0-9]+)*", output)
@@ -1207,7 +1234,12 @@ class LLMTorchModelHandler(TorchModelHandler):
         
         call_count = 0
         for batch_n, batch_data in tqdm(enumerate(data)):
-            label_tensor = torch.stack(batch_data["label"]).T.type(torch.LongTensor)
+            if self.is_hfllm: # pytorch=2.2+
+                label_tensor = torch.Tensor(batch_data["label"])
+            else: #pytorch==1.17
+                label_tensor = torch.stack(batch_data["label"]).T
+
+            label_tensor = label_tensor.type(torch.LongTensor)
             if len(label_tensor.shape) > 1 and label_tensor.shape[-1] != 1:
                 label_tensor = label_tensor.argmax(dim=1).reshape(-1,1)
             label_tensor = label_tensor.squeeze(-1).numpy()
@@ -1215,17 +1247,16 @@ class LLMTorchModelHandler(TorchModelHandler):
             all_labels += label_tensor.tolist()
             all_indices += batch_data["index"]
 
-            
             if self.model.model_type in ["llama_cpp", "hf_api"]:
                 prompt_list = batch_data["prompt"]
 
-                str_output_tensor = []
+                str_output_list = []
                 for prompt_ in prompt_list:
-                    str_output_tensor += [
+                    str_output_list += [
                         self.model(
                             prompt = prompt_,
                             params = self.model_params,
-                        )
+                        ).replace(prompt_, "")
                     ]
                 
                 # if self.model.model_type == "hf_api" and call_count >= 180:
@@ -1235,17 +1266,30 @@ class LLMTorchModelHandler(TorchModelHandler):
                     #     time.sleep(1)
                     
             elif self.model.model_type == "hugging_face":
+                prompt_ids_list = {
+                    "input_ids": torch.stack(batch_data["input_ids"]).reshape(-1, self.dataset.max_prompt_length).to("cuda"),
+                    "attention_mask": torch.stack(batch_data["attention_mask"]).reshape(-1, self.dataset.max_prompt_length).to("cuda"),
+                }
+                
+                # str_output_list = []
+                # for prompt_ids in prompt_ids_list:
+                output_tensor = self.model(
+                    **prompt_ids_list,
+                    **self.model_params,
+                    # params = self.model_params,
+                )
+                
+                output_wo_echo = []
+                for i in range(len(output_tensor)):
+                    output_wo_echo += [output_tensor[i][prompt_ids_list["input_ids"][i].shape[-1]:]]
 
-                str_output_tensor = []
-                for prompt_ids in prompt_list:
-                    output_tensor = self.model(
-                        prompt_ids = prompt_ids,
-                        params = self.model_params,
-                    )
+                str_output_list = self.dataset.decode_tokens(output_wo_echo)
+                # if isinstance(decoded_out, list):
+                #     str_output_list += decoded_out
+                # else:
+                #     str_output_list += [decoded_out]
 
-                    str_output_tensor += [self.dataset.decode_tokens(output_tensor)]
-
-            for idx, str_output in zip(batch_data["index"], str_output_tensor):
+            for idx, str_output, prompt_ in zip(batch_data["index"], str_output_list, batch_data["prompt"]):
                 parsed_out = self.output_parser(str_output)
                 if parsed_out is None:
                     parsed_out = self.output_err_default

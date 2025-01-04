@@ -5,19 +5,38 @@ import re
 from itertools import product
 import os
 
-dataset = "semeval" # "ustancebr" or "semeval"
+dataset = "govbr" # "ustancebr" or "semeval" or "govbr" or "govbr_semeval" or "election" or "ufrgs"
 log_base_path = f"../../out/{dataset}/log"
 eval_base_path = f"../../out/{dataset}/eval"
 out_path = f"{eval_base_path}/.results/data/log_data.csv"
 errors_out_path = f"{eval_base_path}/.results/data/errors_log_data.csv"
 os.makedirs("/".join(errors_out_path.split("/")[:-1]), exist_ok=True)
+allowed_data_folders = None
+# allowed_data_folders = [
+#     'simple_domain',
+#     'hold1topic_out',
+#     'simple_domain_15k',
+#     'simple_domain_filter',
+#     'hold1topic_out_filter',
+#     'hc_bilstmattn_v7',
+#     'domaincorpus_weaksup',
+#     'simple_domain_filt_stance_pred/bilstm_stance_in',
+#     'simple_domain_filt_stance_pred/bilstm_stance_out',
+#     'simple_domain_filt_stance_pred_random/bilstm_stance_in',
+#     'simple_domain_filt_stance_pred_random/bilstm_stance_out',
+#     'stance_vs_notstance',
+#     'sd_filt_stance_notstance_pred/bilstm_stance_in',
+#     'sd_filt_stance_notstance_pred/bilstm_stance_out',
+#     'bo_filt_stance_notstance_pred/bilstm_stance_in',
+#     'bo_filt_stance_notstance_pred/bilstm_stance_out',
+# ]
 
-if dataset == "ustancebr":
+if dataset in ["ustancebr", "govbr", "govbr_semeval"]:
     data_list = ["valid", "test"]
     metric_list = ["f", "p", "r"]
     class_list = ["macro", "0", "1"]
 
-elif dataset == "semeval":
+elif dataset in ["semeval", "election", "ufrgs"]:
     data_list = ["valid", "test"]
     metric_list = ["f", "p", "r"]
     class_list = ["macro", "0", "1", "2"]
@@ -38,11 +57,18 @@ for log_file_path in tqdm(glob(f"{log_base_path}/**/*.txt", recursive=True)):
     log_file_path = log_file_path.replace("\\", "/")
     if log_file_path.endswith("old.txt"):
         continue
-    data_folder = log_file_path.replace(f"{log_base_path}/", "").split("/")[0]
+    data_folder = "/".join(log_file_path.replace(f"{log_base_path}/", "").split("/")[0:-1])
+    # data_folder = log_file_path.replace(f"{log_base_path}/", "").split("/")[0]
     saved_file_name = log_file_path.replace(f"{log_base_path}/", "").split("/")[-1]
     source_topic = saved_file_name.split("_")[0]
-    # destination_topic = saved_file_name.split("_")[1]
-    config_file_name = "_".join(saved_file_name.split("_")[1:-1])
+
+    if data_folder in ["simple_domain_filter"]:
+        destination_topic = saved_file_name.split("_")[1]
+        config_file_name = "_".join(saved_file_name.split("_")[2:-1])
+    else:
+        destination_topic = source_topic
+        config_file_name = "_".join(saved_file_name.split("_")[1:-1])
+    
     version = int(saved_file_name.split("_")[-1].replace(".txt","")[1:])
 
     with open(log_file_path, "r") as f_:
@@ -63,11 +89,10 @@ for log_file_path in tqdm(glob(f"{log_base_path}/**/*.txt", recursive=True)):
                 
                 eval_results_dict["data_folder"] += [data_folder]
                 eval_results_dict["source_topic"] += [source_topic]
-                eval_results_dict["destination_topic"] += [source_topic]#destination_topic]
+                eval_results_dict["destination_topic"] += [destination_topic]
                 eval_results_dict["config_file_name"] += [config_file_name]
                 eval_results_dict["version"] += [version]
                 eval_results_dict["epoch"] += [epoch]
-
             elif line.startswith('Evaluating on "VALIDATION" data'):
                 prefix = "valid"
             elif line.startswith('Evaluating on "TEST" data'):
@@ -82,15 +107,15 @@ for log_file_path in tqdm(glob(f"{log_base_path}/**/*.txt", recursive=True)):
                     value = float(line_spl[(i*2)+1])
 
                     eval_results_dict[key] += [value]
-            
-    current_length = len(eval_results_dict["data_folder"])
 
+    current_length = len(eval_results_dict["data_folder"])
     for key in eval_results_dict.keys():
         if len(eval_results_dict[key]) < current_length:
-            eval_results_dict[key] += [None]        
+            eval_results_dict[key] += [None]
 
 df_results = pd.DataFrame(eval_results_dict)
-df_results = df_results.dropna().query("data_folder in ['simple_domain', 'hold1topic_out']")
+if allowed_data_folders is not None:
+    df_results = df_results.dropna().query("data_folder in @allowed_data_folders")
 df_results.to_csv(out_path, index=False)
 
 
